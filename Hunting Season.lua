@@ -1,0 +1,1252 @@
+-- =================================
+-- https://rscripts.net/@r77
+-- DEV -- > R-77 (Optimized and Updated by BabyMaxford)
+-- https://rscripts.net/@r77
+-- =================================
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local workspaceRef = workspace
+
+-- variables
+local ESPData, DeadESPData = {}, {}
+local animalESPEnabled, deadAnimalESPEnabled = false, false
+local magicBulletEnabled = false
+local magicHitboxSize = 15
+local magicTransparency = 0.7
+local magicColor = Color3.fromRGB(255, 0, 0)
+local magicFolder = "Animals"
+local maxEspDistance = 1000
+local AllAnimals = {}
+local ActiveAnimals = {}
+local aimTarget = "Body" -- not used anymore but kept for safe keeping, idk why lol
+local espColor = Color3.fromRGB(255, 200, 50)
+local deadEspColor = Color3.fromRGB(255, 100, 100)
+local selectedAnimals = {}
+local zoomActive = false
+local zoomOverrideEnabled = false
+local zoomFOV = nil
+local zoomStep = 2
+local minZoom = 2
+local maxZoom = 70
+local distanceInfoEnabled = false
+local distanceTextSize = 22
+local distanceTextColor = Color3.new(1,1,1)
+local aiming = false
+local distanceEditMode = false
+local noRecoilEnabled = false
+local lastPitch = nil
+local recoilThreshold = 0.02
+local trackedAnimal = nil
+local trackedHighlight = nil
+local animalTrackingEnabled = false
+local bloodTrackerEnabled = false
+local woundedAnimals = {}
+local woundedHighlights = {}
+
+-- main ui window
+local Window = Rayfield:CreateWindow({
+   Name = "Hunting Season by R-77 (Updated by BabyMaxford)",
+   LoadingTitle = "Hunting Season Script",
+   LoadingSubtitle = "made with love by R-77 (Updated by BabyMaxford)",
+   ConfigurationSaving = { Enabled = true, FolderName = "HuntingSeasonScript", FileName = "HuntingConfig" },
+   Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
+   KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
+})
+
+local distanceGui = Instance.new("ScreenGui")
+distanceGui.Name = "DistanceIndicator"
+distanceGui.ResetOnSpawn = false
+distanceGui.Parent = game.CoreGui
+
+local distanceLabel = Instance.new("TextLabel")
+distanceLabel.Size = UDim2.new(0,200,0,40)
+distanceLabel.Position = UDim2.new(1,-220,0,120) -- right side with margin
+distanceLabel.BackgroundTransparency = 1
+distanceLabel.TextColor3 = distanceTextColor
+distanceLabel.TextStrokeTransparency = 0.4
+distanceLabel.Font = Enum.Font.GothamBold
+distanceLabel.TextSize = distanceTextSize
+distanceLabel.TextXAlignment = Enum.TextXAlignment.Right
+distanceLabel.Text = ""
+distanceLabel.Visible = false
+distanceLabel.Active = true
+distanceLabel.Parent = distanceGui
+
+-- Cursor Toggle Logic (Window Open/Close)
+local windowMainFrame = Window.MainFrame
+if windowMainFrame then
+    windowMainFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+        if windowMainFrame.Visible then
+            UserInputService.MouseIconEnabled = true
+            windowMainFrame.Modal = true -- Free mouse movement
+        else
+            UserInputService.MouseIconEnabled = false
+            windowMainFrame.Modal = false -- Return to game control
+        end
+    end)
+    -- Initial setup based on window visibility
+    if windowMainFrame.Visible then
+        UserInputService.MouseIconEnabled = true
+        windowMainFrame.Modal = true
+    else
+        UserInputService.MouseIconEnabled = false
+        windowMainFrame.Modal = false
+    end
+end
+
+
+local MainTab     = Window:CreateTab("Main Features", 4483362458)
+local ESPTab      = Window:CreateTab("ESP", 4483362458)
+local AimTab      = Window:CreateTab("Aim & Zoom", 4483362458)
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+local EnvironmentTab = Window:CreateTab("Environment", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+
+-- helpers
+local function findRootPart(model)
+    if model.PrimaryPart then return model.PrimaryPart end
+    for _, child in ipairs(model:GetDescendants()) do
+        if child:IsA("BasePart") then return child end
+    end
+    return nil
+end
+
+-- magic bullet helper
+local function getBestPart(model)
+    local part = model:FindFirstChild("HumanoidRootPart")
+    
+    if not part then part = model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") end
+    
+    if not part then part = model:FindFirstChild("Head") end
+    
+    if not part then
+        for _, child in ipairs(model:GetChildren()) do
+            if child:IsA("BasePart") then
+                part = child
+                break
+            end
+        end
+    end
+    
+    return part
+end
+
+-- -- magic bullet main logic
+local function updateMagicHitboxes()
+    if not magicBulletEnabled then return end
+
+    local folder = Workspace:FindFirstChild(magicFolder)
+    if not folder then return end
+
+    for _, model in ipairs(folder:GetDescendants()) do
+        if model:IsA("Model") then
+            local targetPart = getBestPart(model)
+
+            if targetPart then
+                targetPart.Size = Vector3.new(magicHitboxSize, magicHitboxSize, magicHitboxSize)
+                targetPart.Transparency = magicTransparency
+                targetPart.Color = magicColor
+                targetPart.Material = Enum.Material.ForceField -- Эффект силового поля
+                
+                targetPart.CanCollide = false -- Отключаем коллизию, чтобы животные не застревали
+                targetPart.Massless = true    -- Отключаем массу, чтобы они не падали/не улетали
+            end
+        end
+    end
+end
+
+-- animal tracking and ESP
+local function registerAnimal(model)
+    if not model:IsA("Model") then return end
+
+    local rootPart = findRootPart(model)
+    if not rootPart then return end
+
+    AllAnimals[model] = rootPart
+end
+local function createESPForModel(model, isDead)
+    if not model or not model:IsA("Model") then return end
+
+    local dataTable = isDead and DeadESPData or ESPData
+    if dataTable[model] then return end
+
+    if not isDead and next(selectedAnimals) ~= nil and not selectedAnimals[model.Name] then
+        return
+    end
+
+    local rootPart = findRootPart(model)
+    if not rootPart then return end
+
+    local billGui = Instance.new("BillboardGui")
+    billGui.Name = isDead and "DeadAnimalESPBillboard" or "AnimalESPBillboard"
+    billGui.Adornee = rootPart
+    billGui.Size = UDim2.new(0,140,0,30)
+    billGui.StudsOffset = Vector3.new(0,2.5,0)
+    billGui.AlwaysOnTop = true
+    billGui.ResetOnSpawn = false
+    billGui.Parent = model
+
+    local label = Instance.new("TextLabel")
+    label.Name = "ESPLabel"
+    label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = isDead and deadEspColor or espColor
+    label.TextStrokeColor3 = Color3.new(0,0,0)
+    label.TextStrokeTransparency = 0.3
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextScaled = false
+    label.Text = ""
+    label.Parent = billGui
+
+    dataTable[model] = {
+        billGui = billGui,
+        label = label,
+        part = rootPart
+    }
+end
+local function destroyESPForModel(model, isDead)
+    local dataTable = isDead and DeadESPData or ESPData
+    local data = dataTable[model]
+    if not data then return end
+    if data.billGui and data.billGui.Parent then data.billGui:Destroy() end
+    dataTable[model] = nil
+end
+
+local function updateESPForModel(model, data, isDead)
+    if not data.part or not data.label or not data.billGui then return end
+    if not model:IsDescendantOf(workspaceRef) then destroyESPForModel(model, isDead) return end
+
+    local playerRoot = LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character:FindFirstChild("Head"))
+    if not playerRoot then data.billGui.Enabled = false return end
+
+    local dist = math.floor((playerRoot.Position - data.part.Position).Magnitude)
+    
+    -- Distance-Based Visibility
+    if dist > maxEspDistance then
+        data.billGui.Enabled = false
+        return
+    end
+
+    local worldPos = data.part.Position + Vector3.new(0, 2.5, 0)
+    local camera = workspace.CurrentCamera
+    local _, onScreen = camera:WorldToViewportPoint(worldPos)
+    if not onScreen then data.billGui.Enabled = false return end
+
+    local prefix = isDead and "[DEAD] " or ""
+    data.label.Text = prefix .. model.Name .. " [" .. tostring(dist) .. "m]"
+    data.billGui.Enabled = isDead and deadAnimalESPEnabled or animalESPEnabled
+end
+
+local function scanAndCreateESP(isDead)
+    local folderName = isDead and "DeadAnimals" or "Animals"
+    local folder = workspaceRef:FindFirstChild(folderName)
+
+    if folder then
+        for _,c in ipairs(folder:GetDescendants()) do
+            if c:IsA("Model") then
+                registerAnimal(c)
+            end
+        end
+    end
+end
+task.spawn(function()
+    while true do
+        task.wait(0.7)
+
+        local playerRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not playerRoot then continue end
+
+        local playerPos = playerRoot.Position
+
+        for model, root in pairs(AllAnimals) do
+            if not model:IsDescendantOf(workspaceRef) then
+                AllAnimals[model] = nil
+                ActiveAnimals[model] = nil
+                destroyESPForModel(model,false)
+                continue
+            end
+
+            local dist = (playerPos - root.Position).Magnitude
+
+            if dist <= maxEspDistance then
+                if not ActiveAnimals[model] then
+                    ActiveAnimals[model] = root
+                    createESPForModel(model,false)
+                end
+            else
+                if ActiveAnimals[model] then
+                    ActiveAnimals[model] = nil
+                    destroyESPForModel(model,false)
+                end
+            end
+        end
+    end
+end)
+
+-- ttp(pos)
+local function teleportToPosition(pos)
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
+        Rayfield:Notify({Title="Teleported", Content="Successfully teleported to location", Duration=2, Image=4483362458})
+    else
+        Rayfield:Notify({Title="Teleport Failed", Content="Character not found", Duration=2, Image=4483362458})
+    end
+end
+
+-- zoom override input handling
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+
+    if zoomOverrideEnabled and input.UserInputType == Enum.UserInputType.MouseButton2 then
+        zoomActive = true
+        aiming = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gpe)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        zoomActive = false
+        distanceLabel.Visible = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(input, gpe)
+    if gpe then return end
+    if not zoomOverrideEnabled then return end
+    if not zoomActive then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+
+    local cam = workspace.CurrentCamera
+
+    -- If game reset zoom, reset override
+    if zoomFOV and math.abs(cam.FieldOfView - zoomFOV) > 10 then
+        zoomFOV = cam.FieldOfView
+    end
+
+    if not zoomFOV then
+        zoomFOV = cam.FieldOfView
+    end
+
+    if input.Position.Z > 0 then
+        zoomFOV = math.max(minZoom, zoomFOV - zoomStep)
+    else
+        zoomFOV = math.min(maxZoom, zoomFOV + zoomStep)
+    end
+
+    cam.FieldOfView = zoomFOV
+end)
+
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+
+-- distance label drag logic
+distanceLabel.InputBegan:Connect(function(input)
+    if not distanceEditMode then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = distanceLabel.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+distanceLabel.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+-- update label position while dragging
+UserInputService.InputChanged:Connect(function(input)
+
+    if not distanceEditMode then return end
+
+    if input == dragInput and dragging then
+
+        local delta = input.Position - dragStart
+
+        distanceLabel.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+
+    end
+end)
+-- zoom override main logic to reset FOV if changed by game or when disabled
+RunService.Heartbeat:Connect(function()
+
+    if not zoomOverrideEnabled then return end
+
+    local cam = workspace.CurrentCamera
+
+    if zoomFOV and cam.FieldOfView > 50 then
+        zoomFOV = nil
+    end
+
+end)
+
+-- distance indicator logic
+RunService.Heartbeat:Connect(function()
+
+   if not distanceInfoEnabled then
+      distanceLabel.Visible = false
+      return
+   end
+
+   if distanceEditMode then
+      distanceLabel.Visible = true
+      return
+   end
+
+    local cam = workspace.CurrentCamera
+
+    -- Only show when zoomed / aiming
+    if cam.FieldOfView > 60 then
+        distanceLabel.Visible = false
+        return
+    end
+
+    local origin = cam.CFrame.Position
+    local direction = cam.CFrame.LookVector * 5000
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+    local result = workspace:Raycast(origin, direction, rayParams)
+
+    if result then
+
+        local dist = (origin - result.Position).Magnitude
+        local meters = math.floor(dist)
+
+        distanceLabel.Text = meters .. " m"
+        distanceLabel.Visible = true
+
+    else
+        distanceLabel.Visible = false
+    end
+
+end)
+
+-- Update tracked animal highlight
+RunService.Heartbeat:Connect(function()
+
+    if not trackedAnimal or not trackedHighlight then return end
+
+    if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
+
+        trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
+        trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
+
+    end
+
+end)
+
+-- Get the animal currently being tracked by the raycast
+local function getAnimalFromRaycast()
+
+    local cam = workspace.CurrentCamera
+    local origin = cam.CFrame.Position
+    local direction = cam.CFrame.LookVector * 5000
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+    local result = workspace:Raycast(origin, direction, rayParams)
+
+    if not result then return nil end
+
+    local part = result.Instance
+    local model = part:FindFirstAncestorOfClass("Model")
+
+    if model and model:FindFirstAncestor("Animals") then
+        return model
+    end
+
+    return nil
+end
+
+local function toggleAnimalTracking()
+
+    local animal = getAnimalFromRaycast()
+
+    -- If aiming at nothing → remove highlight
+    if not animal then
+        if trackedHighlight then
+            trackedHighlight:Destroy()
+            trackedHighlight = nil
+            trackedAnimal = nil
+        end
+        return
+    end
+
+    -- Remove previous highlight
+    if trackedHighlight then
+        trackedHighlight:Destroy()
+    end
+
+    trackedAnimal = animal
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "AnimalTrackerHighlight"
+    highlight.FillColor = Color3.fromRGB(255,255,0)
+    highlight.OutlineColor = Color3.fromRGB(255,255,0)
+    highlight.FillTransparency = 0.6
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = animal
+
+    trackedHighlight = highlight
+
+end
+
+-- animal tracking toggle logic
+UserInputService.InputBegan:Connect(function(input, gpe)
+
+    if gpe then return end
+    if not animalTrackingEnabled then return end
+
+    if input.KeyCode == Enum.KeyCode.T then
+        toggleAnimalTracking()
+    end
+
+end)
+
+-- no recoil logic
+RunService.RenderStepped:Connect(function()
+
+    if not noRecoilEnabled then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local pitch, yaw, roll = cam.CFrame:ToOrientation()
+
+    if lastPitch then
+
+        local delta = pitch - lastPitch
+
+        -- detect sudden upward recoil
+        if delta > recoilThreshold then
+
+            cam.CFrame =
+                CFrame.new(cam.CFrame.Position) *
+                CFrame.Angles(lastPitch, yaw, roll)
+
+        end
+
+    end
+
+    lastPitch = pitch
+
+end)
+
+-- Animals blood tracking toggle logic
+UserInputService.InputBegan:Connect(function(input,gpe)
+
+    if gpe then return end
+    if not bloodTrackerEnabled then return end
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and zoomOverrideEnabled then
+
+        local cam = workspace.CurrentCamera
+        local origin = cam.CFrame.Position
+        local direction = cam.CFrame.LookVector * 5000
+
+        local rayParams = RaycastParams.new()
+        rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+        rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+        local hitAnimal = nil
+        local currentOrigin = origin
+
+        for i = 1,5 do
+
+            local result = workspace:Raycast(currentOrigin,direction,rayParams)
+            if not result then break end
+
+            local part = result.Instance
+            local model = part:FindFirstAncestorOfClass("Model")
+
+            if model and model.Parent and model.Parent.Name == "Animals" then
+                hitAnimal = model
+                break
+            end
+
+            -- continue ray past obstacle
+            currentOrigin = result.Position + direction.Unit * 2
+
+        end
+
+        if not hitAnimal then return end
+
+        if woundedAnimals[hitAnimal] then return end
+
+        woundedAnimals[hitAnimal] = true
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "BloodTrailHighlight"
+        highlight.FillColor = Color3.fromRGB(255,0,0)
+        highlight.OutlineColor = Color3.fromRGB(255,0,0)
+        highlight.FillTransparency = 0.6
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = hitAnimal
+
+        woundedHighlights[hitAnimal] = highlight
+
+    end
+
+end)
+
+-- magic bullet heartbeat
+RunService.Heartbeat:Connect(updateMagicHitboxes)
+
+-- esp main loop with heartbeat throttling (5 updates per second)
+local lastESPUpdate = 0
+RunService.Heartbeat:Connect(function()
+    local currentTime = tick()
+    if currentTime - lastESPUpdate >= 0.2 then
+        lastESPUpdate = currentTime
+        for model in pairs(ActiveAnimals) do
+            local data = ESPData[model]
+            if data then
+               updateESPForModel(model, data, false)
+            end
+         end
+        if deadAnimalESPEnabled then
+            for m, d in pairs(DeadESPData) do updateESPForModel(m, d, true) end
+        end
+    end
+end)
+
+-- Update wounded animal highlights
+RunService.Heartbeat:Connect(function()
+
+    for model,highlight in pairs(woundedHighlights) do
+
+        if not model or not model.Parent then
+            if highlight then
+                highlight:Destroy()
+            end
+
+            woundedHighlights[model] = nil
+            woundedAnimals[model] = nil
+            continue
+        end
+
+        if not model:IsDescendantOf(workspace) then
+            highlight:Destroy()
+            woundedHighlights[model] = nil
+            woundedAnimals[model] = nil
+            continue
+        end
+
+        if model.Parent.Name == "DeadAnimals" then
+            highlight.FillColor = Color3.fromRGB(0,255,0)
+            highlight.OutlineColor = Color3.fromRGB(0,255,0)
+        end
+
+    end
+
+end)
+
+-- binds
+local function onAnimalAdded(child, isDead)
+    if child:IsA("Model") then
+        registerAnimal(child)
+    end
+end
+
+local function onAnimalRemoved(child, isDead)
+    if child:IsA("Model") then
+        destroyESPForModel(child, isDead)
+    end
+end
+
+local function bindAnimalFolder(folder, isDead)
+    folder.ChildAdded:Connect(function(ch) onAnimalAdded(ch, isDead) end)
+    folder.DescendantAdded:Connect(function(desc)
+        if desc:IsA("Model") then
+            local enabled = isDead and deadAnimalESPEnabled or animalESPEnabled
+            if enabled then createESPForModel(desc, isDead) end
+        end
+    end)
+    folder.ChildRemoved:Connect(function(ch) onAnimalRemoved(ch, isDead) end)
+    folder.DescendantRemoving:Connect(function(desc)
+        if desc:IsA("Model") then
+            destroyESPForModel(desc, isDead)
+        end
+    end)
+end
+
+local animalsFolder = workspaceRef:FindFirstChild("Animals")
+local deadAnimalsFolder = workspaceRef:FindFirstChild("DeadAnimals")
+if animalsFolder then bindAnimalFolder(animalsFolder, false) end
+if deadAnimalsFolder then bindAnimalFolder(deadAnimalsFolder, true) end
+workspaceRef.ChildAdded:Connect(function(ch)
+    if ch:IsA("Folder") and ch.Name=="Animals" then bindAnimalFolder(ch,false) end
+    if ch:IsA("Folder") and ch.Name=="DeadAnimals" then bindAnimalFolder(ch,true) end
+end)
+
+-- main tab
+MainTab:CreateParagraph({
+   Title="Welcome",
+   Content="Welcome to Hunting Season Script. Author - R-77 (Updated by BabyMaxford)."
+})
+
+-- MAGIC BULLET TAB (Replaced Aimbot)
+AimTab:CreateToggle({
+   Name="Magic Bullet Enabled",
+   CurrentValue=false,
+   Flag="MagicBulletToggle",
+   Callback=function(v)
+      magicBulletEnabled = v
+      if v then
+          Rayfield:Notify({Title="Magic Bullet", Content="Enabled! Hitboxes are expanding.", Duration=2, Image=4483362458})
+      else
+          Rayfield:Notify({Title="Magic Bullet", Content="Disabled.", Duration=2, Image=4483362458})
+      end
+   end
+})
+
+AimTab:CreateSlider({
+   Name="Hitbox Size", Range={1,50}, Increment=1, Suffix=" Studs",
+   CurrentValue=15, Flag="MagicHitboxSize",
+   Callback=function(Value)
+      magicHitboxSize = Value
+   end
+})
+
+AimTab:CreateSlider({
+    Name="Hitbox Transparency", Range={0,1}, Increment=0.1, Suffix="",
+    CurrentValue=0.7, Flag="MagicTransparency",
+    Callback=function(Value)
+       magicTransparency = Value
+    end
+ })
+
+AimTab:CreateColorPicker({
+    Name="Hitbox Color",
+    Color=Color3.fromRGB(255, 0, 0),
+    Flag="MagicColor",
+    Callback=function(v)
+       magicColor = v
+    end
+ })
+
+AimTab:CreateParagraph({
+   Title="Magic Bullet Info",
+   Content="Expands animal hitboxes so you can shoot anywhere near them to hit. Disables collision so they don't get stuck."
+})
+AimTab:CreateSection("Advanced Animals Spotting")
+AimTab:CreateToggle({
+    Name = "Animal Tracker (Press T to Spot Animal)",
+    CurrentValue = false,
+    Flag = "AnimalTrackerToggle",
+    Callback = function(v)
+
+        animalTrackingEnabled = v
+
+        if not v then
+            if trackedHighlight then
+                trackedHighlight:Destroy()
+                trackedHighlight = nil
+                trackedAnimal = nil
+            end
+        end
+
+    end
+})
+AimTab:CreateParagraph({
+   Title="Advacned Animal Spotting Info",
+   Content="When enabled, you can press T while aiming at an animal to spot it. Spotted Highlight not fade out. Press T again to remove the spot highlight. You can spot when aiming using a gun or binoculars"
+})
+AimTab:CreateSection("Blood Trail Tracker")
+AimTab:CreateToggle({
+    Name = "Blood Trail Tracker",
+    CurrentValue = false,
+    Flag = "BloodTracker",
+    Callback = function(v)
+
+        bloodTrackerEnabled = v
+
+        if not v then
+            for model,highlight in pairs(woundedHighlights) do
+                if highlight then
+                    highlight:Destroy()
+                end
+            end
+
+            woundedAnimals = {}
+            woundedHighlights = {}
+        end
+
+    end
+})
+AimTab:CreateParagraph({
+   Title="Blood Trail Tracker Info",
+   Content="When enabled, This allows wounded animal running away to be tracked"
+})
+AimTab:CreateSection("No Recoil (Experimental)")
+AimTab:CreateToggle({
+    Name = "No Recoil",
+    CurrentValue = false,
+    Flag = "NoRecoilToggle",
+    Callback = function(v)
+        noRecoilEnabled = v
+    end
+})
+AimTab:CreateSection("Zoom Overrride (Experimental)")
+AimTab:CreateToggle({
+    Name = "Zoom Override",
+    CurrentValue = false,
+    Flag = "ScrollZoom",
+    Callback = function(v)
+        zoomOverrideEnabled = v
+
+        if not v then
+            zoomFOV = nil
+        end
+    end
+})
+AimTab:CreateSlider({
+    Name = "Zoom Scroll Sensitivity",
+    Range = {1,5},
+    Increment = 1,
+    Suffix = "",
+    CurrentValue = 2,
+    Flag = "ZoomScrollSensitivity",
+    Callback = function(Value)
+        zoomStep = Value
+    end
+})
+AimTab:CreateParagraph({
+   Title="Zoom Override Info",
+   Content="This will override your zoom FOV when aiming with all guns and binoculars. Use scroll wheel to zoom in and out."
+})
+AimTab:CreateToggle({
+    Name = "Distance Info",
+    CurrentValue = false,
+    Flag = "DistanceInfo",
+    Callback = function(v)
+        distanceInfoEnabled = v
+        distanceLabel.Visible = false
+    end
+})
+AimTab:CreateSlider({
+    Name = "Distance Text Size",
+    Range = {14,40},
+    Increment = 1,
+    CurrentValue = 22,
+    Flag = "DistanceTextSize",
+    Callback = function(v)
+        distanceTextSize = v
+        distanceLabel.TextSize = v
+    end
+})
+AimTab:CreateColorPicker({
+    Name = "Distance Text Color",
+    Color = Color3.new(1,1,1),
+    Flag = "DistanceTextColor",
+    Callback = function(v)
+        distanceTextColor = v
+        distanceLabel.TextColor3 = v
+    end
+})
+AimTab:CreateToggle({
+    Name = "Distance UI Edit Mode",
+    CurrentValue = false,
+    Flag = "DistanceEditMode",
+    Callback = function(v)
+
+        distanceEditMode = v
+
+        if v then
+            distanceLabel.Visible = true
+        end
+
+    end
+})
+AimTab:CreateButton({
+    Name = "Reset Distance UI Position",
+    Callback = function()
+
+        distanceLabel.Position = UDim2.new(0.85,0,0.15,0)
+
+    end
+})
+AimTab:CreateParagraph({
+   Title="Distance Info",
+   Content="This will display the distance to the targeted animal while aiming."
+})
+-- esp tab
+local LiveESPToggle = ESPTab:CreateToggle({
+   Name="Live Animal ESP",
+   CurrentValue=false,
+   Flag="AnimalESP",
+   Callback=function(v)
+      animalESPEnabled = v
+      if not v then
+         for m,_ in pairs(ESPData) do destroyESPForModel(m,false) end
+         Rayfield:Notify({Title="Live ESP Disabled", Content="Live animal ESP off", Duration=2, Image=4483362458})
+      else
+         scanAndCreateESP(false)
+         Rayfield:Notify({Title="Live ESP Enabled", Content="Live animal ESP on", Duration=2, Image=4483362458})
+      end
+   end
+})
+
+local DeadESPToggle = ESPTab:CreateToggle({
+   Name="Dead Animal ESP",
+   CurrentValue=false,
+   Flag="DeadAnimalESP",
+   Callback=function(v)
+      deadAnimalESPEnabled = v
+      if not v then
+         for m,_ in pairs(DeadESPData) do destroyESPForModel(m,true) end
+         Rayfield:Notify({Title="Dead ESP Disabled", Content="Dead animal ESP off", Duration=2, Image=4483362458})
+      else
+         scanAndCreateESP(true)
+         Rayfield:Notify({Title="Dead ESP Enabled", Content="Dead animal ESP on", Duration=2, Image=4483362458})
+      end
+   end
+})
+
+ESPTab:CreateColorPicker({
+   Name="Live Animals ESP Color",
+   Color=Color3.fromRGB(255,200,50),
+   Flag="ESPColor",
+   Callback=function(v)
+      espColor=v
+      for _,d in pairs(ESPData) do if d.label then d.label.TextColor3 = espColor end end
+   end
+})
+
+ESPTab:CreateSlider({
+   Name="ESP Render Distance",
+   Range={100,5000},
+   Increment=50,
+   Suffix=" Studs",
+   CurrentValue=1000,
+   Flag="MaxESPDist",
+   Callback=function(Value)
+      maxEspDistance = Value
+   end
+})
+
+ESPTab:CreateColorPicker({
+   Name="Dead Animals ESP Color",
+   Color=Color3.fromRGB(255,100,100),
+   Flag="DeadESPColor",
+   Callback=function(v)
+      deadEspColor=v
+      for _,d in pairs(DeadESPData) do if d.label then d.label.TextColor3 = deadEspColor end end
+   end
+})
+
+local ESPFilterDropdown
+ESPFilterDropdown = ESPTab:CreateDropdown({
+   Name="Filter Animals",
+   Options={"Scan for animals first..."},
+   CurrentOption={},
+   AllowMultiple=true,
+   Flag="AnimalFilter",
+   Callback=function(Selected)
+      pcall(function()
+         selectedAnimals = {}
+         if type(Selected) == "table" and #Selected > 0 then
+            for _, name in ipairs(Selected) do
+               if name ~= "Scan for animals first..." and name ~= "No animals found" then
+                   selectedAnimals[name] = true
+               end
+            end
+            Rayfield:Notify({Title="Animal Filter Updated", Content="Filtering specific animals", Duration=2, Image=4483362458})
+         else
+            Rayfield:Notify({Title="Filter Cleared", Content="Now showing all animals", Duration=2, Image=4483362458})
+         end
+         
+         -- Refresh ESP tags
+         for m, _ in pairs(ESPData) do destroyESPForModel(m, false) end
+         if animalESPEnabled then scanAndCreateESP(false) end
+      end)
+   end
+})
+
+ESPTab:CreateButton({
+   Name="Scan for Nearby Animals",
+   Callback=function()
+      pcall(function()
+         local animalsFolder = workspaceRef:FindFirstChild("Animals")
+         if not animalsFolder then return end
+         
+         local uniqueAnimals = {}
+         local optionsList = {}
+         
+         local playerRoot = LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character:FindFirstChild("Head"))
+         if not playerRoot then return end
+         
+         local function checkAnimal(model)
+            if model:IsA("Model") and not uniqueAnimals[model.Name] then
+                local rootPart = findRootPart(model)
+                if rootPart then
+                    local dist = math.floor((playerRoot.Position - rootPart.Position).Magnitude)
+                    if dist <= maxEspDistance then
+                        uniqueAnimals[model.Name] = true
+                        table.insert(optionsList, model.Name)
+                    end
+                end
+            end
+         end
+         
+         for _, c in ipairs(animalsFolder:GetChildren()) do checkAnimal(c) end
+         for _, c in ipairs(animalsFolder:GetDescendants()) do checkAnimal(c) end
+         
+         table.sort(optionsList)
+         if #optionsList == 0 then optionsList = {"No animals found"} end
+         
+         if ESPFilterDropdown and ESPFilterDropdown.Refresh then
+             ESPFilterDropdown:Refresh(optionsList)
+             Rayfield:Notify({Title="Scan Complete", Content="Found " .. tostring(#optionsList == 1 and optionsList[1] == "No animals found" and 0 or #optionsList) .. " unique animal types nearby.", Duration=3, Image=4483362458})
+         end
+      end)
+   end
+})
+
+ESPTab:CreateParagraph({
+   Title="ESP Information",
+   Content="Live ESP shows living animals, Dead ESP shows dead animals in red. Use the scan button to update the filter list with animals currently around you."
+})
+
+-- tp tab
+TeleportTab:CreateSection("Gun Shops")
+TeleportTab:CreateButton({Name="Sage Armory", Callback=function() teleportToPosition(Vector3.new(-1312.83, -522.89, -1239.84)) end})
+TeleportTab:CreateButton({Name="Smolov's Guns and Ammo", Callback=function() teleportToPosition(Vector3.new(1461.17, -554.26, 2241.36)) end})
+
+TeleportTab:CreateSection("Spawn Areas")
+TeleportTab:CreateButton({Name="Pinewood", Callback=function() teleportToPosition(Vector3.new(-1262.16, -553.75, 1738.19)) end})
+TeleportTab:CreateButton({Name="Sage Camping", Callback=function() teleportToPosition(Vector3.new(-1299.60, -524.24, -1206.62)) end})
+TeleportTab:CreateButton({Name="Theodores Lodge", Callback=function() teleportToPosition(Vector3.new(2412.29, -369.75, -1028.58)) end})
+TeleportTab:CreateButton({Name="Valentino", Callback=function() teleportToPosition(Vector3.new(1563.82, -553.75, 2214.23)) end})
+
+TeleportTab:CreateSection("Hunting Towers")
+TeleportTab:CreateButton({Name="Hunting Tower #1", Callback=function() teleportToPosition(Vector3.new(2170.05, -527.23, 1874.78)) end})
+TeleportTab:CreateButton({Name="Hunting Tower #2", Callback=function() teleportToPosition(Vector3.new(994.57, -475.48, -426.43)) end})
+TeleportTab:CreateButton({Name="Hunting Tower #3", Callback=function() teleportToPosition(Vector3.new(-361.78, -551.48, 1524.88)) end})
+TeleportTab:CreateButton({Name="Hunting Tower #4", Callback=function() teleportToPosition(Vector3.new(169.32, -480.48, 566.80)) end})
+
+TeleportTab:CreateButton({
+   Name="Discover All Locations",
+   Callback=function()
+      local locs = {
+         {pos=Vector3.new(-1262.16, -553.75, 1738.19), name="Pinewood"},
+         {pos=Vector3.new(-1299.60, -524.24, -1206.62), name="Sage Camping"},
+         {pos=Vector3.new(2412.29, -369.75, -1028.58), name="Theodores Lodge"},
+         {pos=Vector3.new(1563.82, -553.75, 2214.23), name="Valentino"}
+      }
+      for i, l in ipairs(locs) do task.spawn(function() task.wait(0.4*i) teleportToPosition(l.pos) end) end
+      Rayfield:Notify({Title="Discovering All Locations", Content="Teleporting to all 4 locations...", Duration=3, Image=4483362458})
+   end
+})
+
+-- Environment Tab
+EnvironmentTab:CreateToggle({
+    Name = "Potato Graphics Mode",
+    CurrentValue = false,
+    Flag = "PotatoGraphics",
+    Callback = function(enabled)
+
+        if enabled then
+
+            local Lighting = game:GetService("Lighting")
+
+            pcall(function()
+                Lighting.GlobalShadows = false
+            end)
+
+            for _,obj in ipairs(workspace:GetDescendants()) do
+
+                if obj:IsA("ParticleEmitter") or obj:IsA("Trail") then
+                    obj.Enabled = false
+                end
+
+                if obj:IsA("Explosion") then
+                    obj:Destroy()
+                end
+
+                if obj:IsA("BasePart") then
+                    pcall(function()
+                        obj.Material = Enum.Material.SmoothPlastic
+                        obj.Reflectance = 0
+                    end)
+                end
+
+            end
+
+        else
+
+            Rayfield:Notify({
+                Title="Reload Recommended",
+                Content="Rejoin to restore original graphics.",
+                Duration=4
+            })
+
+        end
+    end
+})
+EnvironmentTab:CreateToggle({
+    Name = "Full Bright",
+    CurrentValue = false,
+    Flag = "FullBright",
+    Callback = function(enabled)
+
+        local Lighting = game:GetService("Lighting")
+
+        if enabled then
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 12
+            Lighting.FogEnd = 100000
+            Lighting.GlobalShadows = false
+        end
+
+    end
+})
+EnvironmentTab:CreateToggle({
+    Name = "Remove Fog / Atmosphere",
+    CurrentValue = false,
+    Flag = "RemoveFog",
+    Callback = function(enabled)
+
+        local Lighting = game:GetService("Lighting")
+
+        if enabled then
+
+            -- Classic fog
+            Lighting.FogStart = 0
+            Lighting.FogEnd = 1000000
+
+            -- Atmosphere fog
+            for _,v in pairs(Lighting:GetChildren()) do
+                if v:IsA("Atmosphere") then
+                    v.Density = 0
+                    v.Haze = 0
+                end
+            end
+
+        end
+
+    end
+})
+EnvironmentTab:CreateButton({
+    Name = "Remove Grass (Requires Advanced Executor)",
+    Callback = function()
+
+        pcall(function()
+            sethiddenproperty(workspace.Terrain,"GrassLength",0)
+        end)
+
+        Rayfield:Notify({
+            Title="Grass Removed",
+            Content="Terrain grass disabled",
+            Duration=3
+        })
+
+    end
+})
+EnvironmentTab:CreateButton({
+    Name = "Optimize Lighting",
+    Callback = function()
+
+        local Lighting = game:GetService("Lighting")
+
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+        Lighting.Brightness = 1
+
+        Rayfield:Notify({
+            Title="Lighting Optimized",
+            Content="Reduced lighting calculations",
+            Duration=3
+        })
+
+    end
+})
+
+-- settings
+SettingsTab:CreateButton({
+   Name="Destroy GUI",
+   Callback=function()
+      for m,_ in pairs(ESPData) do destroyESPForModel(m,false) end
+      for m,_ in pairs(DeadESPData) do destroyESPForModel(m,true) end
+      if speedUpdateConnection then speedUpdateConnection:Disconnect() end
+      
+      -- Reset cursor visibility on destroy
+      UserInputService.MouseIconEnabled = false
+      if Window and Window.MainFrame then
+          Window.MainFrame.Modal = false
+      end
+      
+      Rayfield:Destroy()
+   end
+})
+SettingsTab:CreateSection("Configuration")
+SettingsTab:CreateKeybind({
+   Name = "Toggle Live ESP Keybind",
+   CurrentKeybind = "G",
+   HoldToInteract = false,
+   Flag = "LiveESPKeybind",
+   Callback = function(Keybind)
+      if LiveESPToggle then
+         LiveESPToggle:Set(not animalESPEnabled)
+      end
+   end,
+})
+
+SettingsTab:CreateKeybind({
+   Name = "Toggle Dead ESP Keybind",
+   CurrentKeybind = "H",
+   HoldToInteract = false,
+   Flag = "DeadESPKeybind",
+   Callback = function(Keybind)
+      if DeadESPToggle then
+         DeadESPToggle:Set(not deadAnimalESPEnabled)
+      end
+   end,
+})
+SettingsTab:CreateButton({
+   Name="Save Configuration",
+   Callback=function() Rayfield:Notify({Title="Configuration Saved", Content="Your settings have been saved successfully", Duration=2, Image=4483362458}) end
+})
+
+-- init
+local animalsFolderInit = workspaceRef:FindFirstChild("Animals")
+if animalsFolderInit then
+    for _, m in ipairs(animalsFolderInit:GetChildren()) do if m:IsA("Model") then registerAnimal(m) end end
+    for _, m in ipairs(animalsFolderInit:GetDescendants()) do if m:IsA("Model") then registerAnimal(m) end end
+end
+local deadInit = workspaceRef:FindFirstChild("DeadAnimals")
+if deadInit then
+    for _, m in ipairs(deadInit:GetChildren()) do if m:IsA("Model") then createESPForModel(m,true) end end
+    for _, m in ipairs(deadInit:GetDescendants()) do if m:IsA("Model") then createESPForModel(m,true) end end
+end
+
+Rayfield:Notify({
+   Title = "Script Loaded (last upd 27.02.2026)",
+   Content = "Hunting Season script loaded successfully! Have fun!",
+   Duration = 3,
+   Image = 4483362458,
+})
