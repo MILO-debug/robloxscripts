@@ -1,7 +1,7 @@
 -- =================================
--- https://rscripts.net/@r77
--- DEV -- > R-77 (Optimized and Updated by BabyMaxford)
--- https://rscripts.net/@r77
+-- https://rscripts.net/@BabyMaxford
+-- DEV -- >(Optimized and Updated by BabyMaxford)
+-- https://rscripts.net/@BabyMaxford
 -- =================================
 
 --// SERVICES
@@ -25,6 +25,7 @@ local maxEspDistance = 1000
 local espColor = Color3.fromRGB(255, 200, 50)
 local deadEspColor = Color3.fromRGB(255, 100, 100)
 local lastESPUpdate = 0
+local lastHitboxUpdate = 0
 local distanceInfoEnabled = false
 local distanceTextSize = 22
 local distanceTextColor = Color3.new(1,1,1)
@@ -52,22 +53,22 @@ local crosshairGui = nil
 local crosshairOffsetX = 0
 local crosshairOffsetY = -30
 local crosshairColor = Color3.new(1,1,1)
+local STUD_TO_YARD = 0.364583
 local distanceGui = Instance.new("ScreenGui")
 distanceGui.Name = "DistanceIndicator"
 distanceGui.ResetOnSpawn = false
 distanceGui.Parent = game.CoreGui
 local distanceLabel = Instance.new("TextLabel")
-distanceLabel.Size = UDim2.new(0,200,0,40)
-distanceLabel.Position = UDim2.new(1,-220,0,120)
+distanceLabel.Size = UDim2.new(0,120,0,30)
+distanceLabel.AnchorPoint = Vector2.new(0.5,0.5)
+distanceLabel.Position = UDim2.new(0.5,-70,0.5,-60)
 distanceLabel.BackgroundTransparency = 1
-distanceLabel.TextColor3 = distanceTextColor
-distanceLabel.TextStrokeTransparency = 0.4
-distanceLabel.Font = Enum.Font.GothamBold
-distanceLabel.TextSize = distanceTextSize
-distanceLabel.TextXAlignment = Enum.TextXAlignment.Right
+distanceLabel.TextColor3 = Color3.fromRGB(255,40,40)
+distanceLabel.Font = Enum.Font.ArialBold
+distanceLabel.TextSize = 22
+distanceLabel.TextStrokeTransparency = 1
 distanceLabel.Text = ""
 distanceLabel.Visible = false
-distanceLabel.Active = false
 distanceLabel.Parent = distanceGui
 local baseSensitivity = UserSettings():GetService("UserGameSettings").MouseSensitivity
 local rayParams = RaycastParams.new()
@@ -85,13 +86,14 @@ local animalHealth = {}
 local thermalHighlights = {}
 local woundedAnimals = {}
 local woundedHighlights = {}
+local originalHitboxes = {}
 local ESPData, DeadESPData = {}, {}
 
 --// UI SETUP
 local Window = Rayfield:CreateWindow({
-   Name = "Hunting Season by R-77 (Updated by BabyMaxford)",
+   Name = "Hunting Season by BabyMaxford",
    LoadingTitle = "Hunting Season Script",
-   LoadingSubtitle = "made with love by R-77 (Updated by BabyMaxford)",
+   LoadingSubtitle = "made with love by R-77 & BabyMaxford",
    ConfigurationSaving = { Enabled = true, FolderName = "HuntingSeasonScript", FileName = "HuntingConfig" },
    Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
    KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
@@ -141,6 +143,7 @@ local function updateCrosshairRay()
     local origin = ray.Origin
     local direction = ray.Direction * 5000
 
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
     local result = workspace:Raycast(origin, direction, rayParams)
 
     crosshairRayOrigin = origin
@@ -530,20 +533,16 @@ local function updateZoomOverride()
 end
 -- distance ui update
 local function updateDistanceUI()
-       if not distanceInfoEnabled then
-      distanceLabel.Visible = false
-      return
-   end
 
-   if distanceEditMode then
-      distanceLabel.Visible = true
-      return
-   end
+    if not distanceInfoEnabled then
+        distanceLabel.Visible = false
+        return
+    end
 
     local cam = workspace.CurrentCamera
 
-    -- Only show when zoomed / aiming
-    if cam.FieldOfView > 60 then
+    -- only show when zoomed
+    if cam.FieldOfView >= baseFOV then
         distanceLabel.Visible = false
         return
     end
@@ -554,14 +553,19 @@ local function updateDistanceUI()
     if result then
 
         local dist = (origin - result.Position).Magnitude
-        local meters = math.floor(dist)
+        local yards = math.floor(dist * STUD_TO_YARD)
 
-        distanceLabel.Text = meters .. " m"
+        if yards > 999 then
+            yards = 999
+        end
+
+        distanceLabel.Text = yards .. " yd"
         distanceLabel.Visible = true
 
     else
         distanceLabel.Visible = false
     end
+
 end
 -- crosshair update
 local lastAimState = false
@@ -646,26 +650,53 @@ local function updateThermal()
 end
 -- magic hitbox update
 local function updateMagicHitboxes()
-    if not magicBulletEnabled then return end
 
-    local folder = Workspace:FindFirstChild(magicFolder)
-    if not folder then return end
+    local cam = workspace.CurrentCamera
 
-    for _, model in ipairs(folder:GetDescendants()) do
-        if model:IsA("Model") then
-            local targetPart = getBestPart(model)
+    for model, root in pairs(ActiveAnimals) do
 
-            if targetPart then
-                targetPart.Size = Vector3.new(magicHitboxSize, magicHitboxSize, magicHitboxSize)
-                targetPart.Transparency = magicTransparency
-                targetPart.Color = magicColor
-                targetPart.Material = Enum.Material.ForceField -- Эффект силового поля
-                
-                targetPart.CanCollide = false -- Отключаем коллизию, чтобы животные не застревали
-                targetPart.Massless = true    -- Отключаем массу, чтобы они не падали/не улетали
+        if not model or not model.Parent then
+            continue
+        end
+
+        local targetPart = getBestPart(model)
+        if not targetPart then continue end
+
+        -- save original values once
+        if not originalHitboxes[targetPart] then
+            originalHitboxes[targetPart] = {
+                Size = targetPart.Size,
+                Transparency = targetPart.Transparency,
+                Color = targetPart.Color,
+                Material = targetPart.Material
+            }
+        end
+
+        local _, onScreen = cam:WorldToViewportPoint(root.Position)
+
+        if magicBulletEnabled and onScreen then
+
+            targetPart.Size = Vector3.new(magicHitboxSize, magicHitboxSize, magicHitboxSize)
+            targetPart.Transparency = magicTransparency
+            targetPart.Color = magicColor
+            targetPart.Material = Enum.Material.ForceField
+            targetPart.CanCollide = false
+            targetPart.Massless = true
+
+        else
+
+            local original = originalHitboxes[targetPart]
+
+            if original then
+                targetPart.Size = original.Size
+                targetPart.Transparency = original.Transparency
+                targetPart.Color = original.Color
+                targetPart.Material = original.Material
             end
+
         end
     end
+
 end
 -- esp update
 local function updateESPForModel(model, data, isDead)
@@ -793,48 +824,6 @@ UserInputService.InputChanged:Connect(function(input, gpe)
     local scale = zoomFOV / baseFOV
     settings.MouseSensitivity = baseSensitivity * scale
 end)
-local dragging = false
-local dragInput
-local dragStart
-local startPos
--- distance label drag logic
-distanceLabel.InputBegan:Connect(function(input)
-    if not distanceEditMode then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = distanceLabel.Position
-
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
-distanceLabel.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
--- update label position while dragging
-UserInputService.InputChanged:Connect(function(input)
-
-    if not distanceEditMode then return end
-
-    if input == dragInput and dragging then
-
-        local delta = input.Position - dragStart
-
-        distanceLabel.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-
-    end
-end)
 -- animal tracking toggle logic
 UserInputService.InputBegan:Connect(function(input, gpe)
 
@@ -884,20 +873,38 @@ end)
 -- main tab
 MainTab:CreateParagraph({
    Title="Welcome",
-   Content="Welcome to Hunting Season Script. Author - R-77 (Updated by BabyMaxford)."
+   Content="Welcome to Hunting Season Script. Author - R-77 & BabyMaxford)."
 })
 
 -- MAGIC BULLET TAB
 AimTab:CreateToggle({
-   Name="Magic Bullet Enabled",
-   CurrentValue=false,
-   Flag="MagicBulletToggle",
-   Callback=function(v)
+   Name = "Magic Bullet Enabled",
+   CurrentValue = false,
+   Flag = "MagicBulletToggle",
+   Callback = function(v)
       magicBulletEnabled = v
       if v then
-          Rayfield:Notify({Title="Magic Bullet", Content="Enabled! Hitboxes are expanding.", Duration=2, Image=4483362458})
+          Rayfield:Notify({
+              Title = "Magic Bullet",
+              Content = "Enabled! Hitboxes are expanding.",
+              Duration = 2,
+              Image = 4483362458
+          })
       else
-          Rayfield:Notify({Title="Magic Bullet", Content="Disabled.", Duration=2, Image=4483362458})
+          for part, data in pairs(originalHitboxes) do
+              if part and part.Parent then
+                  part.Size = data.Size
+                  part.Transparency = data.Transparency
+                  part.Color = data.Color
+                  part.Material = data.Material
+              end
+          end
+          Rayfield:Notify({
+              Title = "Magic Bullet",
+              Content = "Disabled.",
+              Duration = 2,
+              Image = 4483362458
+          })
       end
    end
 })
@@ -1061,23 +1068,13 @@ AimTab:CreateToggle({
         end
     end
 })
-AimTab:CreateSlider({
-    Name = "Scope Scroll Sensitivity",
-    Range = {1,5},
-    Increment = 1,
-    Suffix = "",
-    CurrentValue = 2,
-    Flag = "ZoomScrollSensitivity",
-    Callback = function(Value)
-        zoomStep = Value
-    end
-})
 AimTab:CreateParagraph({
    Title="Adjustable Scope Info",
    Content="This will override your scope FOV when aiming with all guns and binoculars. Use scroll wheel to zoom in and out."
 })
+AimTab:CreateSection("Enable Range Distance")
 AimTab:CreateToggle({
-    Name = "Distance Info",
+    Name = "Show Range Info",
     CurrentValue = false,
     Flag = "DistanceInfo",
     Callback = function(v)
@@ -1085,51 +1082,9 @@ AimTab:CreateToggle({
         distanceLabel.Visible = false
     end
 })
-AimTab:CreateSlider({
-    Name = "Distance Text Size",
-    Range = {14,40},
-    Increment = 1,
-    CurrentValue = 22,
-    Flag = "DistanceTextSize",
-    Callback = function(v)
-        distanceTextSize = v
-        distanceLabel.TextSize = v
-    end
-})
-AimTab:CreateColorPicker({
-    Name = "Distance Text Color",
-    Color = Color3.new(1,1,1),
-    Flag = "DistanceTextColor",
-    Callback = function(v)
-        distanceTextColor = v
-        distanceLabel.TextColor3 = v
-    end
-})
-AimTab:CreateToggle({
-    Name = "Distance UI Edit Mode",
-    CurrentValue = false,
-    Flag = "DistanceEditMode",
-    Callback = function(v)
-
-        distanceEditMode = v
-
-        if v then
-            distanceLabel.Visible = true
-        end
-
-    end
-})
-AimTab:CreateButton({
-    Name = "Reset Distance UI Position",
-    Callback = function()
-
-        distanceLabel.Position = UDim2.new(0.85,0,0.15,0)
-
-    end
-})
 AimTab:CreateParagraph({
-   Title="Distance Info",
-   Content="This will display the distance to the targeted animal while aiming."
+   Title="Range Distance Info",
+   Content="This will display the distance to the target while aiming. Similar to RangeMaster 8x Scope"
 })
 -- esp tab
 local LiveESPToggle = ESPTab:CreateToggle({
@@ -1175,7 +1130,7 @@ ESPTab:CreateColorPicker({
 })
 
 ESPTab:CreateSlider({
-   Name="ESP Render Distance",
+   Name="ESP Max Render Distance",
    Range={100,5000},
    Increment=50,
    Suffix=" Studs",
@@ -1482,7 +1437,7 @@ if deadInit then
 end
 
 Rayfield:Notify({
-   Title = "Script Loaded (last upd 27.02.2026)",
+   Title = "Script Loaded (last update 09.03.2026)",
    Content = "Hunting Season script loaded successfully! Have fun!",
    Duration = 3,
    Image = 4483362458,
