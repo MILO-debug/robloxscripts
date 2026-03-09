@@ -14,7 +14,7 @@ local LocalPlayer = Players.LocalPlayer
 local workspaceRef = workspace
 
 -- variables
-local ESPData, DeadESPData = {}, {}
+
 local animalESPEnabled, deadAnimalESPEnabled = false, false
 local magicBulletEnabled = false
 local magicHitboxSize = 15
@@ -22,18 +22,9 @@ local magicTransparency = 0.7
 local magicColor = Color3.fromRGB(255, 0, 0)
 local magicFolder = "Animals"
 local maxEspDistance = 1000
-local AllAnimals = {}
-local ActiveAnimals = {}
 local aimTarget = "Body" -- not used anymore but kept for safe keeping, idk why lol
 local espColor = Color3.fromRGB(255, 200, 50)
 local deadEspColor = Color3.fromRGB(255, 100, 100)
-local selectedAnimals = {}
-local zoomActive = false
-local zoomOverrideEnabled = false
-local zoomFOV = nil
-local zoomStep = 2
-local minZoom = 2
-local maxZoom = 70
 local distanceInfoEnabled = false
 local distanceTextSize = 22
 local distanceTextColor = Color3.new(1,1,1)
@@ -46,24 +37,37 @@ local trackedAnimal = nil
 local trackedHighlight = nil
 local animalTrackingEnabled = false
 local bloodTrackerEnabled = false
+
+-- data storage
+local selectedAnimals = {}
+local AllAnimals = {}
+local ActiveAnimals = {}
+local animalHealth = {}
 local woundedAnimals = {}
 local woundedHighlights = {}
+local ESPData, DeadESPData = {}, {}
 
--- main ui window
-local Window = Rayfield:CreateWindow({
-   Name = "Hunting Season by R-77 (Updated by BabyMaxford)",
-   LoadingTitle = "Hunting Season Script",
-   LoadingSubtitle = "made with love by R-77 (Updated by BabyMaxford)",
-   ConfigurationSaving = { Enabled = true, FolderName = "HuntingSeasonScript", FileName = "HuntingConfig" },
-   Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
-   KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
-})
+-- zoom override
+local zoomStep = 2
+local minZoom = 2
+local maxZoom = 70
+local zoomEnabled = false
+local zoomOverrideEnabled = false
+local zoomActive = false
+local zoomFOV = nil
+local baseFOV = 70
+local baseSensitivity = UserSettings():GetService("UserGameSettings").MouseSensitivity
 
+-- thermal vision
+local thermalEnabled = false
+local thermalHighlights = {}
+local thermalEffect = nil
+
+-- distance indicator ui setup
 local distanceGui = Instance.new("ScreenGui")
 distanceGui.Name = "DistanceIndicator"
 distanceGui.ResetOnSpawn = false
 distanceGui.Parent = game.CoreGui
-
 local distanceLabel = Instance.new("TextLabel")
 distanceLabel.Size = UDim2.new(0,200,0,40)
 distanceLabel.Position = UDim2.new(1,-220,0,120) -- right side with margin
@@ -75,8 +79,18 @@ distanceLabel.TextSize = distanceTextSize
 distanceLabel.TextXAlignment = Enum.TextXAlignment.Right
 distanceLabel.Text = ""
 distanceLabel.Visible = false
-distanceLabel.Active = true
+distanceLabel.Active = false
 distanceLabel.Parent = distanceGui
+
+-- main ui window
+local Window = Rayfield:CreateWindow({
+   Name = "Hunting Season by R-77 (Updated by BabyMaxford)",
+   LoadingTitle = "Hunting Season Script",
+   LoadingSubtitle = "made with love by R-77 (Updated by BabyMaxford)",
+   ConfigurationSaving = { Enabled = true, FolderName = "HuntingSeasonScript", FileName = "HuntingConfig" },
+   Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
+   KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
+})
 
 -- Cursor Toggle Logic (Window Open/Close)
 local windowMainFrame = Window.MainFrame
@@ -100,7 +114,6 @@ if windowMainFrame then
     end
 end
 
-
 local MainTab     = Window:CreateTab("Main Features", 4483362458)
 local ESPTab      = Window:CreateTab("ESP", 4483362458)
 local AimTab      = Window:CreateTab("Aim & Zoom", 4483362458)
@@ -108,13 +121,198 @@ local TeleportTab = Window:CreateTab("Teleport", 4483362458)
 local EnvironmentTab = Window:CreateTab("Environment", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
--- helpers
+--// HELPERS
+-- thermal vision logic
+local function enableThermalVision()
+
+    if thermalEffect then return end
+
+    local Lighting = game:GetService("Lighting")
+
+    thermalEffect = Instance.new("ColorCorrectionEffect")
+    thermalEffect.Saturation = -1
+    thermalEffect.Contrast = 0.3
+    thermalEffect.Brightness = 0.05
+    thermalEffect.Parent = Lighting
+
+end
+
+local function disableThermalVision()
+
+    if thermalEffect then
+        thermalEffect:Destroy()
+        thermalEffect = nil
+    end
+
+end
+
+-- add thermal highlight to animal
+local function addThermalHighlight(model)
+
+    if thermalHighlights[model] then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.fromRGB(255, 140, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+    highlight.FillTransparency = 0.4
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = model
+
+    thermalHighlights[model] = highlight
+
+end
+
+-- remove thermal highlight from animal
+local function removeThermalHighlight(model)
+
+    local highlight = thermalHighlights[model]
+
+    if highlight then
+        highlight:Destroy()
+        thermalHighlights[model] = nil
+    end
+
+end
+
+-- detect animals on screen and apply thermal highlight
+RunService.Heartbeat:Connect(function()
+
+    if not thermalEnabled then return end
+
+    local camera = workspace.CurrentCamera
+
+    for model,root in pairs(ActiveAnimals) do
+
+        local pos = root.Position
+        local _,onScreen = camera:WorldToViewportPoint(pos)
+
+        if onScreen then
+            addThermalHighlight(model)
+        else
+            removeThermalHighlight(model)
+        end
+
+    end
+
+end)
+
+-- activate thermal when aiming
+RunService.Heartbeat:Connect(function()
+
+    if not thermalEnabled then return end
+
+    local cam = workspace.CurrentCamera
+
+    if cam.FieldOfView < 60 then
+        enableThermalVision()
+    else
+        disableThermalVision()
+
+        for model,_ in pairs(thermalHighlights) do
+            removeThermalHighlight(model)
+        end
+    end
+
+end)
+
+-- mark wounded animals
+local function markAnimalWounded(model)
+
+    if woundedAnimals[model] then return end
+
+    woundedAnimals[model] = true
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "BloodTrailHighlight"
+    highlight.FillColor = Color3.fromRGB(255,0,0)
+    highlight.OutlineColor = Color3.fromRGB(255,0,0)
+    highlight.FillTransparency = 0.6
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = model
+
+    woundedHighlights[model] = highlight
+
+end
+-- monitor animal health to detect wounded
+local function monitorAnimalHealth(model)
+
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    animalHealth[model] = humanoid.Health
+
+    humanoid.HealthChanged:Connect(function(newHealth)
+
+        local oldHealth = animalHealth[model]
+
+        if oldHealth and newHealth < oldHealth then
+            markAnimalWounded(model)
+        end
+
+        animalHealth[model] = newHealth
+
+    end)
+
+end
+
 local function findRootPart(model)
     if model.PrimaryPart then return model.PrimaryPart end
     for _, child in ipairs(model:GetDescendants()) do
         if child:IsA("BasePart") then return child end
     end
     return nil
+end
+
+-- detect when player fires weapon
+local projectileEvent = game:GetService("ReplicatedStorage").Remotes.ProjectileFire
+
+projectileEvent.OnClientEvent:Connect(function(player, origin, targetPosition)
+
+    if not bloodTrackerEnabled then return end
+    if player ~= LocalPlayer then return end
+
+    local direction = (targetPosition - origin).Unit
+
+    local model = penetratingRaycast(origin, direction * 5000)
+
+    if model then
+        markAnimalWounded(model)
+    end
+
+end)
+
+-- penetrating raycast for bullet detection
+local function penetratingRaycast(origin, direction)
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+    local currentOrigin = origin
+
+    for i = 1,5 do
+
+        local result = workspace:Raycast(currentOrigin, direction, rayParams)
+
+        if not result then
+            return nil
+        end
+
+        local model = result.Instance:FindFirstAncestorOfClass("Model")
+
+        if model and model:FindFirstAncestor("Animals") then
+            return model
+        end
+
+        -- continue ray after object hit (penetration)
+        currentOrigin = result.Position + direction.Unit * 0.2
+
+        print("Ray hit:", result.Instance:GetFullName())
+
+    end
+
+    return nil
+
 end
 
 -- magic bullet helper
@@ -169,6 +367,8 @@ local function registerAnimal(model)
     if not rootPart then return end
 
     AllAnimals[model] = rootPart
+
+    monitorAnimalHealth(model)
 end
 local function createESPForModel(model, isDead)
     if not model or not model:IsA("Model") then return end
@@ -300,26 +500,25 @@ local function teleportToPosition(pos)
     end
 end
 
--- zoom override input handling
+-- zoom override logic
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
 
     if zoomOverrideEnabled and input.UserInputType == Enum.UserInputType.MouseButton2 then
         zoomActive = true
-        aiming = true
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input, gpe)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         zoomActive = false
-        distanceLabel.Visible = false
     end
 end)
+
+-- scroll zoom control
 UserInputService.InputChanged:Connect(function(input, gpe)
     if gpe then return end
     if not zoomOverrideEnabled then return end
-    if not zoomActive then return end
     if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
 
     local cam = workspace.CurrentCamera
@@ -340,6 +539,44 @@ UserInputService.InputChanged:Connect(function(input, gpe)
     end
 
     cam.FieldOfView = zoomFOV
+
+    local settings = UserSettings():GetService("UserGameSettings")
+    local scale = zoomFOV / baseFOV
+    settings.MouseSensitivity = baseSensitivity * scale
+end)
+
+-- Update wounded animal highlights
+RunService.Heartbeat:Connect(function()
+
+    for model,highlight in pairs(woundedHighlights) do
+
+        if not model or not model.Parent then
+            highlight:Destroy()
+            woundedHighlights[model] = nil
+            woundedAnimals[model] = nil
+            continue
+        end
+
+        if model.Parent.Name == "DeadAnimals" then
+            highlight.FillColor = Color3.fromRGB(0,255,0)
+            highlight.OutlineColor = Color3.fromRGB(0,255,0)
+        end
+
+    end
+
+end)
+
+-- enforce zoom every frame
+RunService.Heartbeat:Connect(function()
+
+    if not zoomOverrideEnabled then return end
+
+    local cam = workspace.CurrentCamera
+
+    if zoomFOV and cam.FieldOfView > 50 then
+        zoomFOV = nil
+    end
+
 end)
 
 local dragging = false
@@ -385,18 +622,6 @@ UserInputService.InputChanged:Connect(function(input)
         )
 
     end
-end)
--- zoom override main logic to reset FOV if changed by game or when disabled
-RunService.Heartbeat:Connect(function()
-
-    if not zoomOverrideEnabled then return end
-
-    local cam = workspace.CurrentCamera
-
-    if zoomFOV and cam.FieldOfView > 50 then
-        zoomFOV = nil
-    end
-
 end)
 
 -- distance indicator logic
@@ -528,90 +753,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 -- no recoil logic
-RunService.RenderStepped:Connect(function()
 
-    if not noRecoilEnabled then return end
-
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-
-    local pitch, yaw, roll = cam.CFrame:ToOrientation()
-
-    if lastPitch then
-
-        local delta = pitch - lastPitch
-
-        -- detect sudden upward recoil
-        if delta > recoilThreshold then
-
-            cam.CFrame =
-                CFrame.new(cam.CFrame.Position) *
-                CFrame.Angles(lastPitch, yaw, roll)
-
-        end
-
-    end
-
-    lastPitch = pitch
-
-end)
-
--- Animals blood tracking toggle logic
-UserInputService.InputBegan:Connect(function(input,gpe)
-
-    if gpe then return end
-    if not bloodTrackerEnabled then return end
-
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and zoomOverrideEnabled then
-
-        local cam = workspace.CurrentCamera
-        local origin = cam.CFrame.Position
-        local direction = cam.CFrame.LookVector * 5000
-
-        local rayParams = RaycastParams.new()
-        rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
-        rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-        local hitAnimal = nil
-        local currentOrigin = origin
-
-        for i = 1,5 do
-
-            local result = workspace:Raycast(currentOrigin,direction,rayParams)
-            if not result then break end
-
-            local part = result.Instance
-            local model = part:FindFirstAncestorOfClass("Model")
-
-            if model and model.Parent and model.Parent.Name == "Animals" then
-                hitAnimal = model
-                break
-            end
-
-            -- continue ray past obstacle
-            currentOrigin = result.Position + direction.Unit * 2
-
-        end
-
-        if not hitAnimal then return end
-
-        if woundedAnimals[hitAnimal] then return end
-
-        woundedAnimals[hitAnimal] = true
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "BloodTrailHighlight"
-        highlight.FillColor = Color3.fromRGB(255,0,0)
-        highlight.OutlineColor = Color3.fromRGB(255,0,0)
-        highlight.FillTransparency = 0.6
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.Parent = hitAnimal
-
-        woundedHighlights[hitAnimal] = highlight
-
-    end
-
-end)
 
 -- magic bullet heartbeat
 RunService.Heartbeat:Connect(updateMagicHitboxes)
@@ -632,37 +774,6 @@ RunService.Heartbeat:Connect(function()
             for m, d in pairs(DeadESPData) do updateESPForModel(m, d, true) end
         end
     end
-end)
-
--- Update wounded animal highlights
-RunService.Heartbeat:Connect(function()
-
-    for model,highlight in pairs(woundedHighlights) do
-
-        if not model or not model.Parent then
-            if highlight then
-                highlight:Destroy()
-            end
-
-            woundedHighlights[model] = nil
-            woundedAnimals[model] = nil
-            continue
-        end
-
-        if not model:IsDescendantOf(workspace) then
-            highlight:Destroy()
-            woundedHighlights[model] = nil
-            woundedAnimals[model] = nil
-            continue
-        end
-
-        if model.Parent.Name == "DeadAnimals" then
-            highlight.FillColor = Color3.fromRGB(0,255,0)
-            highlight.OutlineColor = Color3.fromRGB(0,255,0)
-        end
-
-    end
-
 end)
 
 -- binds
@@ -753,6 +864,29 @@ AimTab:CreateParagraph({
    Title="Magic Bullet Info",
    Content="Expands animal hitboxes so you can shoot anywhere near them to hit. Disables collision so they don't get stuck."
 })
+AimTab:CreateSection("Thermal Vision")
+AimTab:CreateToggle({
+    Name = "Thermal Scope",
+    CurrentValue = false,
+    Flag = "ThermalScope",
+    Callback = function(v)
+
+        thermalEnabled = v
+
+        if not v then
+            disableThermalVision()
+
+            for model,_ in pairs(thermalHighlights) do
+                removeThermalHighlight(model)
+            end
+        end
+
+    end
+})
+AimTab:CreateParagraph({
+   Title="Thermal Vision Info",
+   Content="When enabled, animals will be highlighted in orange when they are on screen. Additionally, when you aim down sights, the screen will have a thermal vision effect."
+})
 AimTab:CreateSection("Advanced Animals Spotting")
 AimTab:CreateToggle({
     Name = "Animal Tracker (Press T to Spot Animal)",
@@ -761,6 +895,10 @@ AimTab:CreateToggle({
     Callback = function(v)
 
         animalTrackingEnabled = v
+
+        if v then
+            bloodTrackerEnabled = false
+        end
 
         if not v then
             if trackedHighlight then
@@ -776,31 +914,32 @@ AimTab:CreateParagraph({
    Title="Advacned Animal Spotting Info",
    Content="When enabled, you can press T while aiming at an animal to spot it. Spotted Highlight not fade out. Press T again to remove the spot highlight. You can spot when aiming using a gun or binoculars"
 })
-AimTab:CreateSection("Blood Trail Tracker")
+AimTab:CreateSection("Wounded Animal Tracking")
 AimTab:CreateToggle({
-    Name = "Blood Trail Tracker",
+    Name = "Blood Tracking (Highlights Wounded Animals)",
     CurrentValue = false,
-    Flag = "BloodTracker",
+    Flag = "BloodTrackingToggle",
     Callback = function(v)
 
         bloodTrackerEnabled = v
 
-        if not v then
-            for model,highlight in pairs(woundedHighlights) do
-                if highlight then
-                    highlight:Destroy()
-                end
+        if v then
+            animalTrackingEnabled = false
+
+            if trackedHighlight then
+                trackedHighlight:Destroy()
+                trackedHighlight = nil
+                trackedAnimal = nil
             end
 
-            woundedAnimals = {}
-            woundedHighlights = {}
+            Rayfield:Notify({
+                Title = "Blood Tracking Enabled",
+                Content = "Animals you shoot will automatically be tracked.",
+                Duration = 3
+            })
         end
 
     end
-})
-AimTab:CreateParagraph({
-   Title="Blood Trail Tracker Info",
-   Content="When enabled, This allows wounded animal running away to be tracked"
 })
 AimTab:CreateSection("No Recoil (Experimental)")
 AimTab:CreateToggle({
@@ -813,7 +952,7 @@ AimTab:CreateToggle({
 })
 AimTab:CreateSection("Zoom Overrride (Experimental)")
 AimTab:CreateToggle({
-    Name = "Zoom Override",
+    Name = "Scroll Zoom Override",
     CurrentValue = false,
     Flag = "ScrollZoom",
     Callback = function(v)
@@ -821,6 +960,10 @@ AimTab:CreateToggle({
 
         if not v then
             zoomFOV = nil
+        end
+        if not v then
+            zoomFOV = nil
+            UserSettings():GetService("UserGameSettings").MouseSensitivity = baseSensitivity
         end
     end
 })
