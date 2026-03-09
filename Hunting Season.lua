@@ -4,17 +4,17 @@
 -- https://rscripts.net/@r77
 -- =================================
 
+--// SERVICES
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local workspaceRef = workspace
+local camera = workspace.CurrentCamera or workspace:WaitForChild("Camera")
 
--- variables
-
+--// VARIABLES
 local animalESPEnabled, deadAnimalESPEnabled = false, false
 local magicBulletEnabled = false
 local magicHitboxSize = 15
@@ -22,9 +22,9 @@ local magicTransparency = 0.7
 local magicColor = Color3.fromRGB(255, 0, 0)
 local magicFolder = "Animals"
 local maxEspDistance = 1000
-local aimTarget = "Body" -- not used anymore but kept for safe keeping, idk why lol
 local espColor = Color3.fromRGB(255, 200, 50)
 local deadEspColor = Color3.fromRGB(255, 100, 100)
+local lastESPUpdate = 0
 local distanceInfoEnabled = false
 local distanceTextSize = 22
 local distanceTextColor = Color3.new(1,1,1)
@@ -37,17 +37,6 @@ local trackedAnimal = nil
 local trackedHighlight = nil
 local animalTrackingEnabled = false
 local bloodTrackerEnabled = false
-
--- data storage
-local selectedAnimals = {}
-local AllAnimals = {}
-local ActiveAnimals = {}
-local animalHealth = {}
-local woundedAnimals = {}
-local woundedHighlights = {}
-local ESPData, DeadESPData = {}, {}
-
--- zoom override
 local zoomStep = 2
 local minZoom = 2
 local maxZoom = 70
@@ -56,21 +45,20 @@ local zoomOverrideEnabled = false
 local zoomActive = false
 local zoomFOV = nil
 local baseFOV = 70
-local baseSensitivity = UserSettings():GetService("UserGameSettings").MouseSensitivity
-
--- thermal vision
 local thermalEnabled = false
-local thermalHighlights = {}
 local thermalEffect = nil
-
--- distance indicator ui setup
+local crosshairEnabled = false
+local crosshairGui = nil
+local crosshairOffsetX = 0
+local crosshairOffsetY = -30
+local crosshairColor = Color3.new(1,1,1)
 local distanceGui = Instance.new("ScreenGui")
 distanceGui.Name = "DistanceIndicator"
 distanceGui.ResetOnSpawn = false
 distanceGui.Parent = game.CoreGui
 local distanceLabel = Instance.new("TextLabel")
 distanceLabel.Size = UDim2.new(0,200,0,40)
-distanceLabel.Position = UDim2.new(1,-220,0,120) -- right side with margin
+distanceLabel.Position = UDim2.new(1,-220,0,120)
 distanceLabel.BackgroundTransparency = 1
 distanceLabel.TextColor3 = distanceTextColor
 distanceLabel.TextStrokeTransparency = 0.4
@@ -81,8 +69,25 @@ distanceLabel.Text = ""
 distanceLabel.Visible = false
 distanceLabel.Active = false
 distanceLabel.Parent = distanceGui
+local baseSensitivity = UserSettings():GetService("UserGameSettings").MouseSensitivity
+local rayParams = RaycastParams.new()
+rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
--- main ui window
+--// DATA TABLES
+local crosshairRayOrigin = nil
+local crosshairRayDirection = nil
+local crosshairRayResult = nil
+local selectedAnimals = {}
+local AllAnimals = {}
+local ActiveAnimals = {}
+local animalHealth = {}
+local thermalHighlights = {}
+local woundedAnimals = {}
+local woundedHighlights = {}
+local ESPData, DeadESPData = {}, {}
+
+--// UI SETUP
 local Window = Rayfield:CreateWindow({
    Name = "Hunting Season by R-77 (Updated by BabyMaxford)",
    LoadingTitle = "Hunting Season Script",
@@ -91,7 +96,6 @@ local Window = Rayfield:CreateWindow({
    Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
    KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
 })
-
 -- Cursor Toggle Logic (Window Open/Close)
 local windowMainFrame = Window.MainFrame
 if windowMainFrame then
@@ -113,7 +117,6 @@ if windowMainFrame then
         windowMainFrame.Modal = false
     end
 end
-
 local MainTab     = Window:CreateTab("Main Features", 4483362458)
 local ESPTab      = Window:CreateTab("ESP", 4483362458)
 local AimTab      = Window:CreateTab("Aim & Zoom", 4483362458)
@@ -122,7 +125,93 @@ local EnvironmentTab = Window:CreateTab("Environment", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 --// HELPERS
--- thermal vision logic
+-- raycast update
+local function updateCrosshairRay()
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local viewport = cam.ViewportSize
+
+    local ray = cam:ViewportPointToRay(
+        viewport.X/2 + crosshairOffsetX,
+        viewport.Y/2 + crosshairOffsetY
+    )
+
+    local origin = ray.Origin
+    local direction = ray.Direction * 5000
+
+    local result = workspace:Raycast(origin, direction, rayParams)
+
+    crosshairRayOrigin = origin
+    crosshairRayDirection = direction
+    crosshairRayResult = result
+
+end
+-- esp logic
+local function findRootPart(model)
+    if model.PrimaryPart then return model.PrimaryPart end
+    for _, child in ipairs(model:GetDescendants()) do
+        if child:IsA("BasePart") then return child end
+    end
+    return nil
+end
+-- Crosshair Logic
+local function createCrosshair()
+
+    if crosshairGui then return end
+
+    crosshairGui = Instance.new("ScreenGui")
+    crosshairGui.Name = "CustomCrosshair"
+    crosshairGui.ResetOnSpawn = false
+    crosshairGui.Parent = game.CoreGui
+
+    local center = Instance.new("Frame")
+    center.Size = UDim2.new(0,4,0,4)
+    center.Position = UDim2.new(0.5,crosshairOffsetX,0.5,crosshairOffsetY)
+    center.AnchorPoint = Vector2.new(0.5,0.5)
+    center.BackgroundColor3 = crosshairColor
+    center.BorderSizePixel = 0
+    center.Parent = crosshairGui
+
+    local size = 6
+    local thickness = 2
+
+    local function line(xOffset,yOffset,width,height)
+
+        local l = Instance.new("Frame")
+        l.AnchorPoint = Vector2.new(0.5,0.5)
+        l.Position = UDim2.new(
+            0.5,
+            xOffset + crosshairOffsetX,
+            0.5,
+            yOffset + crosshairOffsetY
+        )
+        l.Size = UDim2.new(0,width,0,height)
+        l.BackgroundColor3 = crosshairColor
+        l.BorderSizePixel = 0
+        l.Parent = crosshairGui
+
+    end
+
+    local gap = 6
+    local length = 8
+    local thickness = 2
+
+    line(-(gap+length/2),0,length,thickness) -- left
+    line((gap+length/2),0,length,thickness)  -- right
+    line(0,-(gap+length/2),thickness,length) -- up
+    line(0,(gap+length/2),thickness,length)  -- down
+end
+local function removeCrosshair()
+
+    if crosshairGui then
+        crosshairGui:Destroy()
+        crosshairGui = nil
+    end
+
+end
+-- thermal vision
 local function enableThermalVision()
 
     if thermalEffect then return end
@@ -136,7 +225,6 @@ local function enableThermalVision()
     thermalEffect.Parent = Lighting
 
 end
-
 local function disableThermalVision()
 
     if thermalEffect then
@@ -145,8 +233,6 @@ local function disableThermalVision()
     end
 
 end
-
--- add thermal highlight to animal
 local function addThermalHighlight(model)
 
     if thermalHighlights[model] then return end
@@ -161,8 +247,6 @@ local function addThermalHighlight(model)
     thermalHighlights[model] = highlight
 
 end
-
--- remove thermal highlight from animal
 local function removeThermalHighlight(model)
 
     local highlight = thermalHighlights[model]
@@ -173,49 +257,7 @@ local function removeThermalHighlight(model)
     end
 
 end
-
--- detect animals on screen and apply thermal highlight
-RunService.Heartbeat:Connect(function()
-
-    if not thermalEnabled then return end
-
-    local camera = workspace.CurrentCamera
-
-    for model,root in pairs(ActiveAnimals) do
-
-        local pos = root.Position
-        local _,onScreen = camera:WorldToViewportPoint(pos)
-
-        if onScreen then
-            addThermalHighlight(model)
-        else
-            removeThermalHighlight(model)
-        end
-
-    end
-
-end)
-
--- activate thermal when aiming
-RunService.Heartbeat:Connect(function()
-
-    if not thermalEnabled then return end
-
-    local cam = workspace.CurrentCamera
-
-    if cam.FieldOfView < 60 then
-        enableThermalVision()
-    else
-        disableThermalVision()
-
-        for model,_ in pairs(thermalHighlights) do
-            removeThermalHighlight(model)
-        end
-    end
-
-end)
-
--- mark wounded animals
+-- blood tracker
 local function markAnimalWounded(model)
 
     if woundedAnimals[model] then return end
@@ -233,7 +275,6 @@ local function markAnimalWounded(model)
     woundedHighlights[model] = highlight
 
 end
--- monitor animal health to detect wounded
 local function monitorAnimalHealth(model)
 
     local humanoid = model:FindFirstChildOfClass("Humanoid")
@@ -254,16 +295,6 @@ local function monitorAnimalHealth(model)
     end)
 
 end
-
-local function findRootPart(model)
-    if model.PrimaryPart then return model.PrimaryPart end
-    for _, child in ipairs(model:GetDescendants()) do
-        if child:IsA("BasePart") then return child end
-    end
-    return nil
-end
-
--- detect when player fires weapon
 local projectileEvent = game:GetService("ReplicatedStorage").Remotes.ProjectileFire
 
 projectileEvent.OnClientEvent:Connect(function(player, origin, targetPosition)
@@ -280,8 +311,6 @@ projectileEvent.OnClientEvent:Connect(function(player, origin, targetPosition)
     end
 
 end)
-
--- penetrating raycast for bullet detection
 local function penetratingRaycast(origin, direction)
 
     local rayParams = RaycastParams.new()
@@ -314,8 +343,7 @@ local function penetratingRaycast(origin, direction)
     return nil
 
 end
-
--- magic bullet helper
+-- magic bullet logic
 local function getBestPart(model)
     local part = model:FindFirstChild("HumanoidRootPart")
     
@@ -334,32 +362,7 @@ local function getBestPart(model)
     
     return part
 end
-
--- -- magic bullet main logic
-local function updateMagicHitboxes()
-    if not magicBulletEnabled then return end
-
-    local folder = Workspace:FindFirstChild(magicFolder)
-    if not folder then return end
-
-    for _, model in ipairs(folder:GetDescendants()) do
-        if model:IsA("Model") then
-            local targetPart = getBestPart(model)
-
-            if targetPart then
-                targetPart.Size = Vector3.new(magicHitboxSize, magicHitboxSize, magicHitboxSize)
-                targetPart.Transparency = magicTransparency
-                targetPart.Color = magicColor
-                targetPart.Material = Enum.Material.ForceField -- Эффект силового поля
-                
-                targetPart.CanCollide = false -- Отключаем коллизию, чтобы животные не застревали
-                targetPart.Massless = true    -- Отключаем массу, чтобы они не падали/не улетали
-            end
-        end
-    end
-end
-
--- animal tracking and ESP
+-- esp logic
 local function registerAnimal(model)
     if not model:IsA("Model") then return end
 
@@ -418,7 +421,253 @@ local function destroyESPForModel(model, isDead)
     if data.billGui and data.billGui.Parent then data.billGui:Destroy() end
     dataTable[model] = nil
 end
+-- Get the animal currently being tracked by the raycast
+local function getAnimalFromRaycast()
+    
+    local result = crosshairRayResult
+    if not result then return nil end
 
+    local part = result.Instance
+    local model = part:FindFirstAncestorOfClass("Model")
+
+    if model and model:FindFirstAncestor("Animals") then
+        return model
+    end
+
+    return nil
+end
+local function toggleAnimalTracking()
+
+    local animal = getAnimalFromRaycast()
+
+    -- If aiming at nothing → remove highlight
+    if not animal then
+        if trackedHighlight then
+            trackedHighlight:Destroy()
+            trackedHighlight = nil
+            trackedAnimal = nil
+        end
+        return
+    end
+
+    -- Remove previous highlight
+    if trackedHighlight then
+        trackedHighlight:Destroy()
+    end
+
+    trackedAnimal = animal
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "AnimalTrackerHighlight"
+    highlight.FillColor = Color3.fromRGB(255,255,0)
+    highlight.OutlineColor = Color3.fromRGB(255,255,0)
+    highlight.FillTransparency = 0.6
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = animal
+
+    trackedHighlight = highlight
+
+end
+-- ttp(pos)
+local function teleportToPosition(pos)
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
+        Rayfield:Notify({Title="Teleported", Content="Successfully teleported to location", Duration=2, Image=4483362458})
+    else
+        Rayfield:Notify({Title="Teleport Failed", Content="Character not found", Duration=2, Image=4483362458})
+    end
+end
+-- binds
+local function onAnimalAdded(child, isDead)
+    if child:IsA("Model") then
+        registerAnimal(child)
+    end
+end
+
+local function onAnimalRemoved(child, isDead)
+    if child:IsA("Model") then
+        destroyESPForModel(child, isDead)
+    end
+end
+
+local function bindAnimalFolder(folder, isDead)
+    folder.ChildAdded:Connect(function(ch) onAnimalAdded(ch, isDead) end)
+    folder.DescendantAdded:Connect(function(desc)
+        if desc:IsA("Model") then
+            local enabled = isDead and deadAnimalESPEnabled or animalESPEnabled
+            if enabled then createESPForModel(desc, isDead) end
+        end
+    end)
+    folder.ChildRemoved:Connect(function(ch) onAnimalRemoved(ch, isDead) end)
+    folder.DescendantRemoving:Connect(function(desc)
+        if desc:IsA("Model") then
+            destroyESPForModel(desc, isDead)
+        end
+    end)
+end
+
+local animalsFolder = workspaceRef:FindFirstChild("Animals")
+local deadAnimalsFolder = workspaceRef:FindFirstChild("DeadAnimals")
+if animalsFolder then bindAnimalFolder(animalsFolder, false) end
+if deadAnimalsFolder then bindAnimalFolder(deadAnimalsFolder, true) end
+workspaceRef.ChildAdded:Connect(function(ch)
+    if ch:IsA("Folder") and ch.Name=="Animals" then bindAnimalFolder(ch,false) end
+    if ch:IsA("Folder") and ch.Name=="DeadAnimals" then bindAnimalFolder(ch,true) end
+end)
+
+--// FUNCTIONS FOR HEARTBEAT LOOP
+-- zoom update
+local function updateZoomOverride()
+
+    if not zoomOverrideEnabled then return end
+
+    local cam = workspace.CurrentCamera
+
+    if zoomFOV and cam.FieldOfView > 50 then
+        zoomFOV = nil
+    end
+
+end
+-- distance ui update
+local function updateDistanceUI()
+       if not distanceInfoEnabled then
+      distanceLabel.Visible = false
+      return
+   end
+
+   if distanceEditMode then
+      distanceLabel.Visible = true
+      return
+   end
+
+    local cam = workspace.CurrentCamera
+
+    -- Only show when zoomed / aiming
+    if cam.FieldOfView > 60 then
+        distanceLabel.Visible = false
+        return
+    end
+
+    local result = crosshairRayResult
+    local origin = crosshairRayOrigin
+
+    if result then
+
+        local dist = (origin - result.Position).Magnitude
+        local meters = math.floor(dist)
+
+        distanceLabel.Text = meters .. " m"
+        distanceLabel.Visible = true
+
+    else
+        distanceLabel.Visible = false
+    end
+end
+-- crosshair update
+local lastAimState = false
+camera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+
+    if not crosshairEnabled then
+        removeCrosshair()
+        return
+    end
+
+    local cam = workspace.CurrentCamera
+    local aiming = cam.FieldOfView < 60
+
+    if aiming and not lastAimState then
+        createCrosshair()
+    elseif not aiming and lastAimState then
+        removeCrosshair()
+    end
+
+    lastAimState = aiming
+
+end)
+-- wounded animals update
+local function updateWoundedAnimals()
+
+    for model,highlight in pairs(woundedHighlights) do
+
+        if not model or not model.Parent then
+            highlight:Destroy()
+            woundedHighlights[model] = nil
+            woundedAnimals[model] = nil
+            continue
+        end
+
+        if model.Parent.Name == "DeadAnimals" then
+            highlight.FillColor = Color3.fromRGB(0,255,0)
+            highlight.OutlineColor = Color3.fromRGB(0,255,0)
+        end
+
+    end
+
+end
+-- thermal update
+local function updateThermal()
+
+    if not thermalEnabled then
+        disableThermalVision()
+
+        for model,_ in pairs(thermalHighlights) do
+            removeThermalHighlight(model)
+        end
+
+        return
+    end
+
+    local cam = workspace.CurrentCamera
+    local aiming = cam.FieldOfView < 60
+
+    if not aiming then
+        disableThermalVision()
+
+        for model,_ in pairs(thermalHighlights) do
+            removeThermalHighlight(model)
+        end
+
+        return
+    end
+
+    enableThermalVision()
+
+    for model,root in pairs(ActiveAnimals) do
+        local pos = root.Position
+        local _,onScreen = cam:WorldToViewportPoint(pos)
+
+        if onScreen then
+            addThermalHighlight(model)
+        else
+            removeThermalHighlight(model)
+        end
+    end
+
+end
+-- magic hitbox update
+local function updateMagicHitboxes()
+    if not magicBulletEnabled then return end
+
+    local folder = Workspace:FindFirstChild(magicFolder)
+    if not folder then return end
+
+    for _, model in ipairs(folder:GetDescendants()) do
+        if model:IsA("Model") then
+            local targetPart = getBestPart(model)
+
+            if targetPart then
+                targetPart.Size = Vector3.new(magicHitboxSize, magicHitboxSize, magicHitboxSize)
+                targetPart.Transparency = magicTransparency
+                targetPart.Color = magicColor
+                targetPart.Material = Enum.Material.ForceField -- Эффект силового поля
+                
+                targetPart.CanCollide = false -- Отключаем коллизию, чтобы животные не застревали
+                targetPart.Massless = true    -- Отключаем массу, чтобы они не падали/не улетали
+            end
+        end
+    end
+end
+-- esp update
 local function updateESPForModel(model, data, isDead)
     if not data.part or not data.label or not data.billGui then return end
     if not model:IsDescendantOf(workspaceRef) then destroyESPForModel(model, isDead) return end
@@ -443,7 +692,6 @@ local function updateESPForModel(model, data, isDead)
     data.label.Text = prefix .. model.Name .. " [" .. tostring(dist) .. "m]"
     data.billGui.Enabled = isDead and deadAnimalESPEnabled or animalESPEnabled
 end
-
 local function scanAndCreateESP(isDead)
     local folderName = isDead and "DeadAnimals" or "Animals"
     local folder = workspaceRef:FindFirstChild(folderName)
@@ -489,17 +737,20 @@ task.spawn(function()
         end
     end
 end)
+-- track animal updatee
+local function updateTrackedAnimal()
+        if not trackedAnimal or not trackedHighlight then return end
 
--- ttp(pos)
-local function teleportToPosition(pos)
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
-        Rayfield:Notify({Title="Teleported", Content="Successfully teleported to location", Duration=2, Image=4483362458})
-    else
-        Rayfield:Notify({Title="Teleport Failed", Content="Character not found", Duration=2, Image=4483362458})
+    if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
+
+        trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
+        trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
+
     end
 end
 
+
+--// INPUT HANDLERS
 -- zoom override logic
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
@@ -514,8 +765,6 @@ UserInputService.InputEnded:Connect(function(input, gpe)
         zoomActive = false
     end
 end)
-
--- scroll zoom control
 UserInputService.InputChanged:Connect(function(input, gpe)
     if gpe then return end
     if not zoomOverrideEnabled then return end
@@ -544,46 +793,10 @@ UserInputService.InputChanged:Connect(function(input, gpe)
     local scale = zoomFOV / baseFOV
     settings.MouseSensitivity = baseSensitivity * scale
 end)
-
--- Update wounded animal highlights
-RunService.Heartbeat:Connect(function()
-
-    for model,highlight in pairs(woundedHighlights) do
-
-        if not model or not model.Parent then
-            highlight:Destroy()
-            woundedHighlights[model] = nil
-            woundedAnimals[model] = nil
-            continue
-        end
-
-        if model.Parent.Name == "DeadAnimals" then
-            highlight.FillColor = Color3.fromRGB(0,255,0)
-            highlight.OutlineColor = Color3.fromRGB(0,255,0)
-        end
-
-    end
-
-end)
-
--- enforce zoom every frame
-RunService.Heartbeat:Connect(function()
-
-    if not zoomOverrideEnabled then return end
-
-    local cam = workspace.CurrentCamera
-
-    if zoomFOV and cam.FieldOfView > 50 then
-        zoomFOV = nil
-    end
-
-end)
-
 local dragging = false
 local dragInput
 local dragStart
 local startPos
-
 -- distance label drag logic
 distanceLabel.InputBegan:Connect(function(input)
     if not distanceEditMode then return end
@@ -604,7 +817,6 @@ distanceLabel.InputChanged:Connect(function(input)
         dragInput = input
     end
 end)
-
 -- update label position while dragging
 UserInputService.InputChanged:Connect(function(input)
 
@@ -623,123 +835,6 @@ UserInputService.InputChanged:Connect(function(input)
 
     end
 end)
-
--- distance indicator logic
-RunService.Heartbeat:Connect(function()
-
-   if not distanceInfoEnabled then
-      distanceLabel.Visible = false
-      return
-   end
-
-   if distanceEditMode then
-      distanceLabel.Visible = true
-      return
-   end
-
-    local cam = workspace.CurrentCamera
-
-    -- Only show when zoomed / aiming
-    if cam.FieldOfView > 60 then
-        distanceLabel.Visible = false
-        return
-    end
-
-    local origin = cam.CFrame.Position
-    local direction = cam.CFrame.LookVector * 5000
-
-    local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
-    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-    local result = workspace:Raycast(origin, direction, rayParams)
-
-    if result then
-
-        local dist = (origin - result.Position).Magnitude
-        local meters = math.floor(dist)
-
-        distanceLabel.Text = meters .. " m"
-        distanceLabel.Visible = true
-
-    else
-        distanceLabel.Visible = false
-    end
-
-end)
-
--- Update tracked animal highlight
-RunService.Heartbeat:Connect(function()
-
-    if not trackedAnimal or not trackedHighlight then return end
-
-    if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
-
-        trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
-        trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
-
-    end
-
-end)
-
--- Get the animal currently being tracked by the raycast
-local function getAnimalFromRaycast()
-
-    local cam = workspace.CurrentCamera
-    local origin = cam.CFrame.Position
-    local direction = cam.CFrame.LookVector * 5000
-
-    local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
-    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-    local result = workspace:Raycast(origin, direction, rayParams)
-
-    if not result then return nil end
-
-    local part = result.Instance
-    local model = part:FindFirstAncestorOfClass("Model")
-
-    if model and model:FindFirstAncestor("Animals") then
-        return model
-    end
-
-    return nil
-end
-
-local function toggleAnimalTracking()
-
-    local animal = getAnimalFromRaycast()
-
-    -- If aiming at nothing → remove highlight
-    if not animal then
-        if trackedHighlight then
-            trackedHighlight:Destroy()
-            trackedHighlight = nil
-            trackedAnimal = nil
-        end
-        return
-    end
-
-    -- Remove previous highlight
-    if trackedHighlight then
-        trackedHighlight:Destroy()
-    end
-
-    trackedAnimal = animal
-
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "AnimalTrackerHighlight"
-    highlight.FillColor = Color3.fromRGB(255,255,0)
-    highlight.OutlineColor = Color3.fromRGB(255,255,0)
-    highlight.FillTransparency = 0.6
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = animal
-
-    trackedHighlight = highlight
-
-end
-
 -- animal tracking toggle logic
 UserInputService.InputBegan:Connect(function(input, gpe)
 
@@ -752,75 +847,47 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 
 end)
 
--- no recoil logic
-
-
--- magic bullet heartbeat
-RunService.Heartbeat:Connect(updateMagicHitboxes)
-
--- esp main loop with heartbeat throttling (5 updates per second)
-local lastESPUpdate = 0
+--// MAIN UPDATE LOOP
+-- the big ol' hearbeat (The Heart)
 RunService.Heartbeat:Connect(function()
+
+    updateCrosshairRay()
+    updateThermal()
+    updateMagicHitboxes()
+    updateDistanceUI()
+    updateTrackedAnimal()
+    updateWoundedAnimals()
+    updateZoomOverride()
+
+    -- ESP throttle
     local currentTime = tick()
     if currentTime - lastESPUpdate >= 0.2 then
         lastESPUpdate = currentTime
+
         for model in pairs(ActiveAnimals) do
             local data = ESPData[model]
             if data then
-               updateESPForModel(model, data, false)
+                updateESPForModel(model, data, false)
             end
-         end
+        end
+
         if deadAnimalESPEnabled then
-            for m, d in pairs(DeadESPData) do updateESPForModel(m, d, true) end
+            for m,d in pairs(DeadESPData) do
+                updateESPForModel(m,d,true)
+            end
         end
     end
+
 end)
 
--- binds
-local function onAnimalAdded(child, isDead)
-    if child:IsA("Model") then
-        registerAnimal(child)
-    end
-end
-
-local function onAnimalRemoved(child, isDead)
-    if child:IsA("Model") then
-        destroyESPForModel(child, isDead)
-    end
-end
-
-local function bindAnimalFolder(folder, isDead)
-    folder.ChildAdded:Connect(function(ch) onAnimalAdded(ch, isDead) end)
-    folder.DescendantAdded:Connect(function(desc)
-        if desc:IsA("Model") then
-            local enabled = isDead and deadAnimalESPEnabled or animalESPEnabled
-            if enabled then createESPForModel(desc, isDead) end
-        end
-    end)
-    folder.ChildRemoved:Connect(function(ch) onAnimalRemoved(ch, isDead) end)
-    folder.DescendantRemoving:Connect(function(desc)
-        if desc:IsA("Model") then
-            destroyESPForModel(desc, isDead)
-        end
-    end)
-end
-
-local animalsFolder = workspaceRef:FindFirstChild("Animals")
-local deadAnimalsFolder = workspaceRef:FindFirstChild("DeadAnimals")
-if animalsFolder then bindAnimalFolder(animalsFolder, false) end
-if deadAnimalsFolder then bindAnimalFolder(deadAnimalsFolder, true) end
-workspaceRef.ChildAdded:Connect(function(ch)
-    if ch:IsA("Folder") and ch.Name=="Animals" then bindAnimalFolder(ch,false) end
-    if ch:IsA("Folder") and ch.Name=="DeadAnimals" then bindAnimalFolder(ch,true) end
-end)
-
+--// GUI SETUP
 -- main tab
 MainTab:CreateParagraph({
    Title="Welcome",
    Content="Welcome to Hunting Season Script. Author - R-77 (Updated by BabyMaxford)."
 })
 
--- MAGIC BULLET TAB (Replaced Aimbot)
+-- MAGIC BULLET TAB
 AimTab:CreateToggle({
    Name="Magic Bullet Enabled",
    CurrentValue=false,
@@ -834,7 +901,6 @@ AimTab:CreateToggle({
       end
    end
 })
-
 AimTab:CreateSlider({
    Name="Hitbox Size", Range={1,50}, Increment=1, Suffix=" Studs",
    CurrentValue=15, Flag="MagicHitboxSize",
@@ -850,7 +916,6 @@ AimTab:CreateSlider({
        magicTransparency = Value
     end
  })
-
 AimTab:CreateColorPicker({
     Name="Hitbox Color",
     Color=Color3.fromRGB(255, 0, 0),
@@ -859,7 +924,6 @@ AimTab:CreateColorPicker({
        magicColor = v
     end
  })
-
 AimTab:CreateParagraph({
    Title="Magic Bullet Info",
    Content="Expands animal hitboxes so you can shoot anywhere near them to hit. Disables collision so they don't get stuck."
@@ -886,6 +950,36 @@ AimTab:CreateToggle({
 AimTab:CreateParagraph({
    Title="Thermal Vision Info",
    Content="When enabled, animals will be highlighted in orange when they are on screen. Additionally, when you aim down sights, the screen will have a thermal vision effect."
+})
+AimTab:CreateSection("Custom Crosshair")
+AimTab:CreateToggle({
+    Name = "Custom Crosshair",
+    CurrentValue = false,
+    Flag = "CustomCrosshair",
+    Callback = function(v)
+
+        crosshairEnabled = v
+
+        if not v then
+            removeCrosshair()
+        end
+
+    end
+})
+AimTab:CreateColorPicker({
+    Name = "Crosshair Color",
+    Color = Color3.new(1,1,1),
+    Flag = "CrosshairColor",
+    Callback = function(v)
+
+        crosshairColor = v
+
+        if crosshairGui then
+            removeCrosshair()
+            createCrosshair()
+        end
+
+    end
 })
 AimTab:CreateSection("Advanced Animals Spotting")
 AimTab:CreateToggle({
@@ -950,9 +1044,9 @@ AimTab:CreateToggle({
         noRecoilEnabled = v
     end
 })
-AimTab:CreateSection("Zoom Overrride (Experimental)")
+AimTab:CreateSection("Adjustable Scope (Experimental)")
 AimTab:CreateToggle({
-    Name = "Scroll Zoom Override",
+    Name = "Adjustable Scope",
     CurrentValue = false,
     Flag = "ScrollZoom",
     Callback = function(v)
@@ -968,7 +1062,7 @@ AimTab:CreateToggle({
     end
 })
 AimTab:CreateSlider({
-    Name = "Zoom Scroll Sensitivity",
+    Name = "Scope Scroll Sensitivity",
     Range = {1,5},
     Increment = 1,
     Suffix = "",
@@ -979,8 +1073,8 @@ AimTab:CreateSlider({
     end
 })
 AimTab:CreateParagraph({
-   Title="Zoom Override Info",
-   Content="This will override your zoom FOV when aiming with all guns and binoculars. Use scroll wheel to zoom in and out."
+   Title="Adjustable Scope Info",
+   Content="This will override your scope FOV when aiming with all guns and binoculars. Use scroll wheel to zoom in and out."
 })
 AimTab:CreateToggle({
     Name = "Distance Info",
