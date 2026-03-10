@@ -790,18 +790,22 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         zoomActive = true
     end
 end)
-
 UserInputService.InputEnded:Connect(function(input, gpe)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
         zoomActive = false
+        local settings = UserSettings():GetService("UserGameSettings")
+        settings.MouseSensitivity = baseSensitivity
+        zoomFOV = nil
     end
 end)
 UserInputService.InputChanged:Connect(function(input, gpe)
     if gpe then return end
     if not zoomOverrideEnabled then return end
+    
     if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
 
     local cam = workspace.CurrentCamera
+    if cam.FieldOfView >= 60 then return end
 
     -- If game reset zoom, reset override
     if zoomFOV and math.abs(cam.FieldOfView - zoomFOV) > 10 then
@@ -875,7 +879,14 @@ MainTab:CreateParagraph({
    Title="Welcome",
    Content="Welcome to Hunting Season Script. Author - R-77 & BabyMaxford)."
 })
-
+MainTab:CreateParagraph({
+   Title="What's New:",
+   Content="Fixed and Optimize Magic Bullet and Hitbox, Adjustable Scope, Thermal Scope, Custom Crosshair, Advanced Animal Tracking, RangeMaster Scope, Reduce Graphics, Full Bright, Remove Fog, Light Optimazation and Remove Grass"
+})
+MainTab:CreateParagraph({
+   Title="Bugs Found:",
+   Content="For some reason, Adjustable Scope does not work in Boulder Creek Map. It does work on other maps though."
+})
 -- MAGIC BULLET TAB
 AimTab:CreateToggle({
    Name = "Magic Bullet Enabled",
