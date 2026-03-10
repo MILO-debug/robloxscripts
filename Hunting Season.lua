@@ -21,7 +21,7 @@ local magicHitboxSize = 15
 local magicTransparency = 0.7
 local magicColor = Color3.fromRGB(255, 0, 0)
 local magicFolder = "Animals"
-local maxEspDistance = 1000
+local maxEspDistance = 1500
 local espColor = Color3.fromRGB(255, 200, 50)
 local deadEspColor = Color3.fromRGB(255, 100, 100)
 local lastESPUpdate = 0
@@ -36,6 +36,11 @@ local lastPitch = nil
 local recoilThreshold = 0.02
 local trackedAnimal = nil
 local trackedHighlight = nil
+local trackingBeaconEnabled = false
+local trackingBeam = nil
+local trackingAttachment1 = nil
+local trackingAttachment2 = nil
+local trackingColumn = nil
 local animalTrackingEnabled = false
 local bloodTrackerEnabled = false
 local zoomStep = 2
@@ -93,7 +98,7 @@ local ESPData, DeadESPData = {}, {}
 local Window = Rayfield:CreateWindow({
    Name = "Hunting Season by BabyMaxford",
    LoadingTitle = "Hunting Season Script",
-   LoadingSubtitle = "made with love by R-77 & BabyMaxford",
+   LoadingSubtitle = "made with love by BabyMaxford",
    ConfigurationSaving = { Enabled = true, FolderName = "HuntingSeasonScript", FileName = "HuntingConfig" },
    Discord = { Enabled = false, Invite = "noinvitelink", RememberJoins = true },
    KeySystem = false -- free script without key.... uhhh nobody really cares, nobody will read this. - Well I did -BabyMaxford :)
@@ -119,14 +124,66 @@ if windowMainFrame then
         windowMainFrame.Modal = false
     end
 end
+
+--// TABS
 local MainTab     = Window:CreateTab("Main Features", 4483362458)
 local ESPTab      = Window:CreateTab("ESP", 4483362458)
-local AimTab      = Window:CreateTab("Aim & Zoom", 4483362458)
-local TeleportTab = Window:CreateTab("Teleport", 4483362458)
+local AimTab      = Window:CreateTab("Aim", 4483362458)
 local EnvironmentTab = Window:CreateTab("Environment", 4483362458)
+local TeleportTab = Window:CreateTab("Teleport", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 --// HELPERS
+-- find animals root part
+local function findRootPart(model)
+    if model.PrimaryPart then return model.PrimaryPart end
+    for _, child in ipairs(model:GetDescendants()) do
+        if child:IsA("BasePart") then return child end
+    end
+    return nil
+end
+-- create beam columns
+local function createTrackingColumn(model)
+
+    if not trackingBeaconEnabled then return end
+
+    local root = findRootPart(model)
+    if not root then
+        warn("No root part for animal")
+        return
+    end
+
+    removeTrackingColumn()
+
+    local column = Instance.new("Part")
+    column.Name = "TrackingBeacon"
+    column.Shape = Enum.PartType.Cylinder
+    column.Anchored = true
+    column.CanCollide = false
+    column.Material = Enum.Material.Neon
+    column.Color = Color3.fromRGB(0,255,255)
+
+    column.Size = Vector3.new(60,4000,60)
+    column.Transparency = 0.3
+    column.Parent = workspace
+
+    column.CFrame =
+        CFrame.new(root.Position + Vector3.new(0,2000,0))
+        * CFrame.Angles(0,0,math.rad(90))
+
+    trackingColumn = column
+
+    print("Tracking column created")
+
+end
+function removeTrackingColumn()
+
+    if trackingColumn then
+        trackingColumn:Destroy()
+        trackingColumn = nil
+    end
+
+end
 -- aiming mode update
 local function isAiming()
     local cam = workspace.CurrentCamera
@@ -156,14 +213,6 @@ local function updateCrosshairRay()
     crosshairRayDirection = direction
     crosshairRayResult = result
 
-end
--- esp logic
-local function findRootPart(model)
-    if model.PrimaryPart then return model.PrimaryPart end
-    for _, child in ipairs(model:GetDescendants()) do
-        if child:IsA("BasePart") then return child end
-    end
-    return nil
 end
 -- Crosshair Logic
 local function createCrosshair()
@@ -455,6 +504,7 @@ local function toggleAnimalTracking()
             trackedHighlight:Destroy()
             trackedHighlight = nil
             trackedAnimal = nil
+            removeTrackingColumn()
         end
         return
     end
@@ -462,6 +512,7 @@ local function toggleAnimalTracking()
     -- Remove previous highlight
     if trackedHighlight then
         trackedHighlight:Destroy()
+        removeTrackingColumn()
     end
 
     trackedAnimal = animal
@@ -473,8 +524,11 @@ local function toggleAnimalTracking()
     highlight.FillTransparency = 0.6
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent = animal
-
     trackedHighlight = highlight
+
+    if trackingBeaconEnabled then
+        createTrackingColumn(animal)
+    end
 
 end
 -- ttp(pos)
@@ -767,18 +821,26 @@ task.spawn(function()
         end
     end
 end)
--- track animal updatee
+-- track animal update
 local function updateTrackedAnimal()
-        if not trackedAnimal or not trackedHighlight then return end
+    if not trackedAnimal or not trackedHighlight then return end
+
+    if trackingColumn then
+        if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
+            trackingColumn.Color = Color3.fromRGB(255,0,0)
+        else
+            trackingColumn.Color = Color3.fromRGB(0,255,255)
+        end
+    end
 
     if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
-
         trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
         trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
-
+        if trackingBeam then
+            trackingBeam.Color = ColorSequence.new(Color3.fromRGB(255,0,0))
+        end
     end
 end
-
 
 --// INPUT HANDLERS
 -- zoom override logic
@@ -841,14 +903,45 @@ end)
 --// MAIN UPDATE LOOP
 -- the big ol' hearbeat (The Heart)
 RunService.Heartbeat:Connect(function()
+    -- beam columns
+    if trackingColumn and trackedAnimal then
+        local root = findRootPart(trackedAnimal)
+        if root then
+            trackingColumn.CFrame =
+                CFrame.new(root.Position + Vector3.new(0,2000,0))
+                * CFrame.Angles(0,0,math.rad(90))
+        end
+    end
+
+    -- enforce zoom override
+    if zoomOverrideEnabled and zoomFOV and isAiming() then
+        local cam = workspace.CurrentCamera
+        if cam.FieldOfView ~= zoomFOV then
+            cam.FieldOfView = zoomFOV
+        end
+    end
 
     updateCrosshairRay()
-    updateThermal()
-    updateMagicHitboxes()
-    updateDistanceUI()
-    updateTrackedAnimal()
-    updateWoundedAnimals()
-    updateZoomOverride()
+
+    if thermalEnabled then
+        updateThermal()
+    end
+
+    if magicBulletEnabled then
+        updateMagicHitboxes()
+    end
+
+    if distanceInfoEnabled then
+        updateDistanceUI()
+    end
+
+    if animalTrackingEnabled then
+        updateTrackedAnimal()
+    end
+
+    if bloodTrackerEnabled then
+        updateWoundedAnimals()
+    end
 
     -- ESP throttle
     local currentTime = tick()
@@ -875,7 +968,7 @@ end)
 -- main tab
 MainTab:CreateParagraph({
    Title="Welcome",
-   Content="Welcome to Hunting Season Script. Author - R-77 & BabyMaxford)."
+   Content="Welcome to Hunting Season Script. Author - R-77 & BabyMaxford."
 })
 MainTab:CreateParagraph({
    Title="What's New:",
@@ -883,7 +976,7 @@ MainTab:CreateParagraph({
 })
 MainTab:CreateParagraph({
    Title="Bugs Found:",
-   Content="For some reason, Adjustable Scope does not work in Boulder Creek Map. It does work on other maps though."
+   Content="For some reason, Adjustable Scope does not work in Boulder Creek Map. It does work on other maps though. No Recoil and Blood Tracking are still in development and may not work."
 })
 -- MAGIC BULLET TAB
 AimTab:CreateToggle({
@@ -1020,9 +1113,23 @@ AimTab:CreateToggle({
 
     end
 })
+AimTab:CreateToggle({
+    Name = "Tracking Beacon",
+    CurrentValue = false,
+    Flag = "TrackingColumn",
+    Callback = function(v)
+        trackingBeaconEnabled = v
+        if not v then
+            removeTrackingColumn()
+        elseif trackedAnimal then
+            createTrackingColumn(trackedAnimal)
+        end
+
+    end
+})
 AimTab:CreateParagraph({
-   Title="Advacned Animal Spotting Info",
-   Content="When enabled, you can press T while aiming at an animal to spot it. Spotted Highlight not fade out. Press T again to remove the spot highlight. You can spot when aiming using a gun or binoculars"
+   Title="Advanced Animal Tracking Info",
+   Content="When enabled, you can press T while aiming at an animal to spot it. Spotted Highlight not fade out. Press T again to remove the spot highlight. You can spot when aiming using a gun."
 })
 AimTab:CreateSection("Wounded Animal Tracking")
 AimTab:CreateToggle({
@@ -1143,7 +1250,7 @@ ESPTab:CreateSlider({
    Range={100,5000},
    Increment=50,
    Suffix=" Studs",
-   CurrentValue=1000,
+   CurrentValue=1500,
    Flag="MaxESPDist",
    Callback=function(Value)
       maxEspDistance = Value
@@ -1427,10 +1534,6 @@ SettingsTab:CreateKeybind({
          DeadESPToggle:Set(not deadAnimalESPEnabled)
       end
    end,
-})
-SettingsTab:CreateButton({
-   Name="Save Configuration",
-   Callback=function() Rayfield:Notify({Title="Configuration Saved", Content="Your settings have been saved successfully", Duration=2, Image=4483362458}) end
 })
 
 -- init
