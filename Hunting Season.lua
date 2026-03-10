@@ -1244,19 +1244,6 @@ ESPTab:CreateColorPicker({
       for _,d in pairs(ESPData) do if d.label then d.label.TextColor3 = espColor end end
    end
 })
-
-ESPTab:CreateSlider({
-   Name="ESP Max Render Distance",
-   Range={100,5000},
-   Increment=50,
-   Suffix=" Studs",
-   CurrentValue=1500,
-   Flag="MaxESPDist",
-   Callback=function(Value)
-      maxEspDistance = Value
-   end
-})
-
 ESPTab:CreateColorPicker({
    Name="Dead Animals ESP Color",
    Color=Color3.fromRGB(255,100,100),
@@ -1266,7 +1253,18 @@ ESPTab:CreateColorPicker({
       for _,d in pairs(DeadESPData) do if d.label then d.label.TextColor3 = deadEspColor end end
    end
 })
-
+ESPTab:CreateSlider({
+   Name="ESP Distance Limit",
+   Range={100,5000},
+   Increment=50,
+   Suffix=" Studs",
+   CurrentValue=1500,
+   Flag="MaxESPDist",
+   Callback=function(Value)
+      maxEspDistance = Value
+   end
+})
+ESPTab:CreateSection("Track Specific Animals")
 local ESPFilterDropdown
 ESPFilterDropdown = ESPTab:CreateDropdown({
    Name="Filter Animals",
@@ -1294,7 +1292,6 @@ ESPFilterDropdown = ESPTab:CreateDropdown({
       end)
    end
 })
-
 ESPTab:CreateButton({
    Name="Scan for Nearby Animals",
    Callback=function()
