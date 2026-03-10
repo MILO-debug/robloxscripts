@@ -127,6 +127,12 @@ local EnvironmentTab = Window:CreateTab("Environment", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
 --// HELPERS
+-- aiming mode update
+local function isAiming()
+    local cam = workspace.CurrentCamera
+    if not cam then return false end
+    return cam.FieldOfView < baseFOV
+end
 -- raycast update
 local function updateCrosshairRay()
 
@@ -524,9 +530,7 @@ local function updateZoomOverride()
 
     if not zoomOverrideEnabled then return end
 
-    local cam = workspace.CurrentCamera
-
-    if zoomFOV and cam.FieldOfView > 50 then
+    if not isAiming() then
         zoomFOV = nil
     end
 
@@ -539,32 +543,29 @@ local function updateDistanceUI()
         return
     end
 
-    local cam = workspace.CurrentCamera
-
-    -- only show when zoomed
-    if cam.FieldOfView >= baseFOV then
+    if not isAiming() then
         distanceLabel.Visible = false
         return
     end
 
     local result = crosshairRayResult
-    local origin = crosshairRayOrigin
-
-    if result then
-
-        local dist = (origin - result.Position).Magnitude
-        local yards = math.floor(dist * STUD_TO_YARD)
-
-        if yards > 999 then
-            yards = 999
-        end
-
-        distanceLabel.Text = yards .. " yd"
-        distanceLabel.Visible = true
-
-    else
+    if not result then
         distanceLabel.Visible = false
+        return
     end
+
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local origin = root and root.Position or crosshairRayOrigin
+
+    local dist = (origin - result.Position).Magnitude
+    local yards = math.floor(dist * STUD_TO_YARD)
+
+    if yards > 999 then
+        yards = 999
+    end
+
+    distanceLabel.Text = yards .. " yd"
+    distanceLabel.Visible = true
 
 end
 -- crosshair update
@@ -576,8 +577,7 @@ camera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
         return
     end
 
-    local cam = workspace.CurrentCamera
-    local aiming = cam.FieldOfView < 60
+    local aiming = isAiming()
 
     if aiming and not lastAimState then
         createCrosshair()
@@ -621,10 +621,7 @@ local function updateThermal()
         return
     end
 
-    local cam = workspace.CurrentCamera
-    local aiming = cam.FieldOfView < 60
-
-    if not aiming then
+    if not isAiming() then
         disableThermalVision()
 
         for model,_ in pairs(thermalHighlights) do
@@ -635,6 +632,8 @@ local function updateThermal()
     end
 
     enableThermalVision()
+
+    local cam = workspace.CurrentCamera
 
     for model,root in pairs(ActiveAnimals) do
         local pos = root.Position
@@ -801,11 +800,10 @@ end)
 UserInputService.InputChanged:Connect(function(input, gpe)
     if gpe then return end
     if not zoomOverrideEnabled then return end
-    
     if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+    if not isAiming() then return end
 
     local cam = workspace.CurrentCamera
-    if cam.FieldOfView >= 60 then return end
 
     -- If game reset zoom, reset override
     if zoomFOV and math.abs(cam.FieldOfView - zoomFOV) > 10 then
