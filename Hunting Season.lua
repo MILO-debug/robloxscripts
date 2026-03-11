@@ -34,14 +34,13 @@ local distanceEditMode = false
 local noRecoilEnabled = false
 local lastPitch = nil
 local recoilThreshold = 0.02
+local animalTrackingEnabled = false
+local compass = false
+local trackingArrow = nil
+local trackingDistanceGui = nil
+local trackingDistanceLabel = nil
 local trackedAnimal = nil
 local trackedHighlight = nil
-local trackingBeaconEnabled = false
-local trackingBeam = nil
-local trackingAttachment1 = nil
-local trackingAttachment2 = nil
-local trackingColumn = nil
-local animalTrackingEnabled = false
 local bloodTrackerEnabled = false
 local zoomStep = 2
 local minZoom = 2
@@ -92,6 +91,8 @@ local thermalHighlights = {}
 local woundedAnimals = {}
 local woundedHighlights = {}
 local originalHitboxes = {}
+local lastAnimalPosition = {}
+local lastAnimalPosition = {}
 local ESPData, DeadESPData = {}, {}
 
 --// UI SETUP
@@ -142,45 +143,156 @@ local function findRootPart(model)
     end
     return nil
 end
--- create beam columns
-local function createTrackingColumn(model)
+-- animal distance gui
+local function createTrackingDistanceHUD()
 
-    if not trackingBeaconEnabled then return end
+    if trackingDistanceGui then return end
 
-    local root = findRootPart(model)
-    if not root then
-        warn("No root part for animal")
+    trackingDistanceGui = Instance.new("ScreenGui")
+    trackingDistanceGui.Name = "TrackingDistanceHUD"
+    trackingDistanceGui.ResetOnSpawn = false
+    trackingDistanceGui.Parent = game.CoreGui
+    trackingDistanceLabel = Instance.new("TextLabel")
+    trackingDistanceLabel.Size = UDim2.new(0,260,0,40)
+    trackingDistanceLabel.AnchorPoint = Vector2.new(0.5,0)
+    trackingDistanceLabel.Position = UDim2.new(0.5,0,0,20)
+    trackingDistanceLabel.BackgroundTransparency = 1
+    trackingDistanceLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    trackingDistanceLabel.TextStrokeTransparency = 0
+    trackingDistanceLabel.Font = Enum.Font.GothamBold
+    trackingDistanceLabel.TextSize = 22
+    trackingDistanceLabel.Text = ""
+    trackingDistanceLabel.Parent = trackingDistanceGui
+
+end
+-- remove animal distance gui
+local function removeTrackingDistanceHUD()
+
+    if trackingDistanceGui then
+        trackingDistanceGui:Destroy()
+        trackingDistanceGui = nil
+        trackingDistanceLabel = nil
+    end
+
+end
+-- create compass
+local function createTrackingArrow()
+
+    if trackingArrow then return end
+
+    local part = Instance.new("Part")
+    part.Name = "TrackingArrow"
+    part.Size = Vector3.new(1,1,1)
+    part.Anchored = true
+    part.CanCollide = false
+    part.Material = Enum.Material.Neon
+    part.Transparency = 0.2
+
+    local mesh = Instance.new("SpecialMesh")
+    mesh.MeshType = Enum.MeshType.FileMesh
+    mesh.MeshId = "rbxassetid://1033714"
+
+    -- long narrow cone
+    mesh.Scale = Vector3.new(0.25,4,0.25)
+
+    -- center the cone properly
+    mesh.Offset = Vector3.new(0,-0.5,0)
+
+    mesh.Parent = part
+
+    part.Parent = workspace
+    trackingArrow = part
+    createTrackingDistanceHUD()
+
+end
+-- update compass
+local function updateTrackingArrow()
+
+    if not compass then
+        removeTrackingArrow()
         return
     end
 
-    removeTrackingColumn()
+    if not trackingArrow or not trackedAnimal then
+        return
+    end
 
-    local column = Instance.new("Part")
-    column.Name = "TrackingBeacon"
-    column.Shape = Enum.PartType.Cylinder
-    column.Anchored = true
-    column.CanCollide = false
-    column.Material = Enum.Material.Neon
-    column.Color = Color3.fromRGB(0,255,255)
+    if not trackedAnimal.Parent then
+        removeTrackingArrow()
+        trackedAnimal = nil
 
-    column.Size = Vector3.new(60,4000,60)
-    column.Transparency = 0.3
-    column.Parent = workspace
+        if trackedHighlight then
+            trackedHighlight:Destroy()
+            trackedHighlight = nil
+        end
+        return
+    end
 
-    column.CFrame =
-        CFrame.new(root.Position + Vector3.new(0,2000,0))
-        * CFrame.Angles(0,0,math.rad(90))
+    local root = findRootPart(trackedAnimal)
+    local playerRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root or not playerRoot then return end
 
-    trackingColumn = column
+    local dist = (playerRoot.Position - root.Position).Magnitude
 
-    print("Tracking column created")
+    -- update HUD
+    if trackingDistanceLabel then
+        local yards = math.floor(dist * 0.364583)
+        trackingDistanceLabel.Text = "Animal Distance: "..yards.." yd"
+    end
+
+    -- arrow position
+    local arrowPos =
+        playerRoot.Position
+        + Vector3.new(0,5,0)
+        + (playerRoot.CFrame.LookVector * 6)
+
+    local direction = root.Position - playerRoot.Position
+    direction = Vector3.new(direction.X,0,direction.Z).Unit
+
+    trackingArrow.CFrame =
+        CFrame.lookAt(arrowPos, arrowPos + direction)
+        * CFrame.Angles(math.rad(270),0,0)
+
+    -- color
+    local isDead = trackedAnimal.Parent.Name == "DeadAnimals"
+
+    if isDead then
+        trackingArrow.Color = Color3.fromRGB(255,60,60)
+    else
+        trackingArrow.Color = Color3.fromRGB(80,255,120)
+    end
+
+    -- movement detection
+    local moving = false
+    local lastPos = lastAnimalPosition[trackedAnimal]
+
+    if lastPos then
+        if (root.Position - lastPos).Magnitude > 0.25 then
+            moving = true
+        end
+    end
+
+    lastAnimalPosition[trackedAnimal] = root.Position
+
+    -- transparency logic
+    if dist < 100 then
+        trackingArrow.Transparency = 0
+    else
+        if moving then
+            local pulse = (math.sin(tick()*6) + 1) / 2
+            trackingArrow.Transparency = 0.15 + pulse * 0.35
+        else
+            trackingArrow.Transparency = 0.25
+        end
+    end
 
 end
-function removeTrackingColumn()
+local function removeTrackingArrow()
 
-    if trackingColumn then
-        trackingColumn:Destroy()
-        trackingColumn = nil
+    if trackingArrow then
+        trackingArrow:Destroy()
+        trackingArrow = nil
+        removeTrackingDistanceHUD()
     end
 
 end
@@ -481,38 +593,77 @@ local function destroyESPForModel(model, isDead)
 end
 -- Get the animal currently being tracked by the raycast
 local function getAnimalFromRaycast()
-    
+
     local result = crosshairRayResult
-    if not result then return nil end
 
-    local part = result.Instance
-    local model = part:FindFirstAncestorOfClass("Model")
-
-    if model and model:FindFirstAncestor("Animals") then
-        return model
+    -- normal hit
+    if result then
+        local model = result.Instance:FindFirstAncestorOfClass("Model")
+        if model and model:FindFirstAncestor("Animals") then
+            return model
+        end
     end
 
-    return nil
+    -- fallback: find closest animal to crosshair
+    local cam = workspace.CurrentCamera
+    local viewport = cam.ViewportSize
+    local center = Vector2.new(viewport.X/2, viewport.Y/2)
+
+    local closestAnimal = nil
+    local closestDist = 50 -- pixels
+
+    for model, root in pairs(ActiveAnimals) do
+        local pos, onScreen = cam:WorldToViewportPoint(root.Position)
+
+        if onScreen then
+            local screenPos = Vector2.new(pos.X, pos.Y)
+            local dist = (screenPos - center).Magnitude
+
+            if dist < closestDist then
+                closestDist = dist
+                closestAnimal = model
+            end
+        end
+    end
+
+    return closestAnimal
+
 end
 local function toggleAnimalTracking()
 
     local animal = getAnimalFromRaycast()
 
-    -- If aiming at nothing → remove highlight
-    if not animal then
+    -- If currently tracking this same animal → turn tracking OFF
+    if trackedAnimal and animal == trackedAnimal then
+        
         if trackedHighlight then
             trackedHighlight:Destroy()
             trackedHighlight = nil
-            trackedAnimal = nil
-            removeTrackingColumn()
         end
+
+        trackedAnimal = nil
+        removeTrackingArrow()
+
+        return
+    end
+
+    -- If aiming at nothing → stop tracking
+    if not animal then
+
+        if trackedHighlight then
+            trackedHighlight:Destroy()
+            trackedHighlight = nil
+        end
+
+        trackedAnimal = nil
+        removeTrackingArrow()
+
         return
     end
 
     -- Remove previous highlight
     if trackedHighlight then
         trackedHighlight:Destroy()
-        removeTrackingColumn()
     end
 
     trackedAnimal = animal
@@ -524,11 +675,10 @@ local function toggleAnimalTracking()
     highlight.FillTransparency = 0.6
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent = animal
+
     trackedHighlight = highlight
 
-    if trackingBeaconEnabled then
-        createTrackingColumn(animal)
-    end
+    createTrackingArrow()
 
 end
 -- ttp(pos)
@@ -578,7 +728,7 @@ workspaceRef.ChildAdded:Connect(function(ch)
     if ch:IsA("Folder") and ch.Name=="DeadAnimals" then bindAnimalFolder(ch,true) end
 end)
 
---// FUNCTIONS FOR HEARTBEAT LOOP
+--// FUNCTIONS FOR LOOP
 -- zoom update
 local function updateZoomOverride()
 
@@ -753,7 +903,9 @@ local function updateMagicHitboxes()
 end
 -- esp update
 local function updateESPForModel(model, data, isDead)
-    if not data.part or not data.label or not data.billGui then return end
+    if not data or not data.part or not data.label or not data.billGui then
+        return
+    end
     if not model:IsDescendantOf(workspaceRef) then destroyESPForModel(model, isDead) return end
 
     local playerRoot = LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character:FindFirstChild("Head"))
@@ -823,23 +975,33 @@ task.spawn(function()
 end)
 -- track animal update
 local function updateTrackedAnimal()
-    if not trackedAnimal or not trackedHighlight then return end
 
-    if trackingColumn then
-        if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
-            trackingColumn.Color = Color3.fromRGB(255,0,0)
-        else
-            trackingColumn.Color = Color3.fromRGB(0,255,255)
+    if not trackedAnimal then
+        removeTrackingArrow()
+        return
+    end
+
+    -- animal removed
+    if not trackedAnimal.Parent then
+        removeTrackingArrow()
+        trackedAnimal = nil
+
+        if trackedHighlight then
+            trackedHighlight:Destroy()
+            trackedHighlight = nil
+        end
+
+        return
+    end
+
+    -- animal died
+    if trackedAnimal.Parent.Name == "DeadAnimals" then
+        if trackedHighlight then
+            trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
+            trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
         end
     end
 
-    if trackedAnimal.Parent and trackedAnimal.Parent.Name == "DeadAnimals" then
-        trackedHighlight.FillColor = Color3.fromRGB(255,0,0)
-        trackedHighlight.OutlineColor = Color3.fromRGB(255,0,0)
-        if trackingBeam then
-            trackingBeam.Color = ColorSequence.new(Color3.fromRGB(255,0,0))
-        end
-    end
 end
 
 --// INPUT HANDLERS
@@ -903,14 +1065,9 @@ end)
 --// MAIN UPDATE LOOP
 -- the big ol' hearbeat (The Heart)
 RunService.Heartbeat:Connect(function()
-    -- beam columns
-    if trackingColumn and trackedAnimal then
-        local root = findRootPart(trackedAnimal)
-        if root then
-            trackingColumn.CFrame =
-                CFrame.new(root.Position + Vector3.new(0,2000,0))
-                * CFrame.Angles(0,0,math.rad(90))
-        end
+    -- update tracking compass
+    if trackedAnimal and compass then
+        updateTrackingArrow()
     end
 
     -- enforce zoom override
@@ -972,7 +1129,7 @@ MainTab:CreateParagraph({
 })
 MainTab:CreateParagraph({
    Title="What's New:",
-   Content="Fixed and Optimize Magic Bullet and Hitbox, Adjustable Scope, Thermal Scope, Custom Crosshair, Advanced Animal Tracking, RangeMaster Scope, Reduce Graphics, Full Bright, Remove Fog, Light Optimazation and Remove Grass"
+   Content="Fixed and Optimize Magic Bullet and Hitbox, Adjustable Scope, Thermal Scope, Custom Crosshair, Advanced Animal Tracking, Tracking Compass, RangeMaster Scope, Reduce Graphics, Full Bright, Remove Fog, Light Optimazation and Remove Grass"
 })
 MainTab:CreateParagraph({
    Title="Bugs Found:",
@@ -1113,23 +1270,26 @@ AimTab:CreateToggle({
 
     end
 })
-AimTab:CreateToggle({
-    Name = "Tracking Beacon",
-    CurrentValue = false,
-    Flag = "TrackingColumn",
-    Callback = function(v)
-        trackingBeaconEnabled = v
-        if not v then
-            removeTrackingColumn()
-        elseif trackedAnimal then
-            createTrackingColumn(trackedAnimal)
-        end
-
-    end
-})
 AimTab:CreateParagraph({
    Title="Advanced Animal Tracking Info",
    Content="When enabled, you can press T while aiming at an animal to spot it. Spotted Highlight not fade out. Press T again to remove the spot highlight. You can spot when aiming using a gun."
+})
+AimTab:CreateToggle({
+   Name = "Tracking Compass",
+   CurrentValue = false,
+   Flag = "trackingArrow",
+   Callback = function(v)
+      compass = v
+      if not v then
+         removeTrackingArrow()
+      elseif trackedAnimal then
+         createTrackingArrow()
+      end
+   end,
+})
+AimTab:CreateParagraph({
+   Title="Tracking Compass Info",
+   Content="When enabled, track an animal using the Advanced Animal Tracking, and an arrow will appear above you to point where the animal position. Arrow pulsates when the animal is moving or running. Arrow will turn red when the animal dies. And when you are near the animal it will turn opaque. "
 })
 AimTab:CreateSection("Wounded Animal Tracking")
 AimTab:CreateToggle({
