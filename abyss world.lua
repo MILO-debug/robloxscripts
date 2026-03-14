@@ -1,9 +1,9 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-    Name = "Abyss World | Official Script",
+    Name = "Abyss World | BabyMaxford",
     LoadingTitle = "Loading Systems...",
-    LoadingSubtitle = "by Gemini",
+    LoadingSubtitle = "by BabyMaxford",
     ConfigurationSaving = { Enabled = false }
 })
 
@@ -22,7 +22,16 @@ local RotationX, RotationY, SavedCameraCFrame = 0, 0, nil
 local Connections = {}
 local SelectedCheckpoint, SelectedPlayerName = nil, nil
 
---// PRECISE CHECKPOINT DATA
+--// WAYPOINT VISUAL PART
+local WaypointPart = Instance.new("Part")
+WaypointPart.Name = "CustomWaypoint"
+WaypointPart.Size = Vector3.new(2, 2, 2)
+WaypointPart.Shape = Enum.PartType.Ball
+WaypointPart.Color = Color3.fromRGB(0, 255, 0)
+WaypointPart.Material = Enum.Material.Neon
+WaypointPart.Transparency = 0.5
+WaypointPart.CanCollide, WaypointPart.Anchored = false, true
+
 --// PRECISE CHECKPOINT DATA
 local CheckpointData = {
     ["Checkpoint 0: Temple of the Abyss"] = CFrame.new(-11.1401329, 21259.8965, -105.8598),
@@ -107,6 +116,23 @@ TeleportTab:CreateButton({Name = "Teleport to Selected Player", Callback = funct
     local target = Players:FindFirstChild(SelectedPlayerName or ""); local tRoot = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart"); local myRoot = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     if tRoot and myRoot then myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 3, 0) end
 end})
+--// TELEPORT TAB
+TeleportTab:CreateSection("Waypoints")
+TeleportTab:CreateButton({
+    Name = "Destroy Waypoint",
+    Callback = function()
+        WaypointPos = nil
+        WaypointPart.Parent = nil
+        Rayfield:Notify({Title = "Waypoint Removed", Content = "The custom waypoint has been cleared.", Duration = 2})
+    end
+})
+TeleportTab:CreateParagraph({
+    Title = "Waypoint Info:", 
+    Content = "Press the T key to create a waypoint in your current position. Press \"Left Shift\" to teleport to the waypoint's position instantly. Waypoint Teleport always teleports you to the waypoint location no matter where you are in game."
+})
+
+TeleportTab:CreateSection("Player Teleport")
+-- (Remaining Player TP logic continues here...)
 
 --// ENVIRONMENT TAB
 EnvTab:CreateToggle({Name = "Full Bright", CurrentValue = false, Callback = function(v) Lighting.Brightness = v and 2 or 1; Lighting.ClockTime = v and 14 or 12; Lighting.FogEnd = v and 100000 or 1000; Lighting.GlobalShadows = not v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end})
@@ -141,8 +167,28 @@ Connections.Main = RunService.RenderStepped:Connect(function()
     end
 end)
 
-UserInputService.InputBegan:Connect(function(i, g)
-    if g then return end
-    if i.KeyCode == Enum.KeyCode.H then ToggleFreecam()
-    elseif i.KeyCode == Enum.KeyCode.LeftControl and PlatformEnabled then TogglePlatform() end
+Connections.Input = UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    -- T: Save Waypoint
+    if input.KeyCode == Enum.KeyCode.T then
+        WaypointPos = root.CFrame
+        WaypointPart.CFrame = root.CFrame
+        WaypointPart.Parent = workspace
+        Rayfield:Notify({Title = "Waypoint Set", Content = "Position saved! Press Left Shift to return.", Duration = 2})
+
+    -- Left Shift: Teleport to Waypoint
+    elseif input.KeyCode == Enum.KeyCode.LeftShift and not FreecamEnabled then
+        if WaypointPos then 
+            root.Velocity = Vector3.zero
+            root.CFrame = WaypointPos 
+        end
+    -- H: Toggle Freecam
+    elseif input.KeyCode == Enum.KeyCode.H then
+        ToggleFreecam()
+    -- Left Control: Emergency Platform
+    elseif input.KeyCode == Enum.KeyCode.LeftControl and PlatformEnabled then
+        TogglePlatform()
+    end
 end)
