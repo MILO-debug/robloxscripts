@@ -15,12 +15,19 @@ local WaypointPos = nil
 local Connections = {}
 local selectedPlayerName = nil
 local PlatformEnabled = false
-local CurrentPlatform = nil -- Added missing variable definition
+local CurrentPlatform = nil 
 local Lighting = game:GetService("Lighting")
 local OriginalFogEnd = Lighting.FogEnd
 local OriginalBrightness = Lighting.Brightness
 local OriginalClockTime = Lighting.ClockTime
 local OriginalAmbient = Lighting.Ambient
+local FreecamEnabled = false
+local FreecamSpeed = 1.5
+local Sensitivity = 0.5
+local RotationX = 0
+local RotationY = 0
+local Camera = workspace.CurrentCamera
+local SavedCameraCFrame = nil
 
 --// WAYPOINT SETTINGS
 local WaypointPart = Instance.new("Part")
@@ -53,6 +60,37 @@ local function TogglePlatform()
         CurrentPlatform.Material = Enum.Material.ForceField
         CurrentPlatform.Parent = workspace
         CurrentPlatform.Position = root.Position - Vector3.new(0, 3.5, 0)
+    end
+end
+
+--// FREECAM LOGIC
+local function ToggleFreecam()
+    FreecamEnabled = not FreecamEnabled
+    local char = Player.Character
+    
+    if FreecamEnabled then
+        -- SAVE the current position before detaching
+        SavedCameraCFrame = Camera.CFrame
+        
+        local _, y, _ = Camera.CFrame:ToEulerAnglesYXZ()
+        RotationY = math.degrees(y)
+        RotationX = 0
+        Camera.CameraType = Enum.CameraType.Scriptable
+    else
+        -- RESTORE the saved position before giving control back
+        if SavedCameraCFrame then
+            Camera.CFrame = SavedCameraCFrame
+        end
+        
+        Camera.CameraType = Enum.CameraType.Custom
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        
+        -- Release character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then part.Anchored = false end
+            end
+        end
     end
 end
 
@@ -101,37 +139,25 @@ tpFolder:Button("Teleport to Selected", function()
     if root and Checkpoints[selectedCheckpoint] then root.CFrame = Checkpoints[selectedCheckpoint] end
 end)
 
---// PLAYER TP FOLDER
 local pvp = w:CreateFolder("Player TP")
-
--- This function grabs fresh names every time you open the dropdown
 local function getPlayerNames()
     local names = {}
     for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
-        if p ~= Player then 
-            table.insert(names, p.Name)
-        end
+        if p ~= Player then table.insert(names, p.Name) end
     end
     return names
 end
-
-pvp:Dropdown("Select Player", getPlayerNames(), function(selected)
-    selectedPlayerName = selected -- Correctly stores the string name
-end)
-
+pvp:Dropdown("Select Player", getPlayerNames(), function(selected) selectedPlayerName = selected end)
 pvp:Button("Teleport to Player", function()
-    -- We look for the player object using the name stored from the dropdown
     local target = game:GetService("Players"):FindFirstChild(selectedPlayerName or "")
     local targetRoot = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
     local myRoot = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-    
-    if targetRoot and myRoot then
-        -- Teleport 3 studs above them to avoid physics glitches
-        myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 3, 0)
-    else
-        warn("Target player or character not found.")
-    end
+    if targetRoot and myRoot then myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 3, 0) end
 end)
+
+local camFolder = w:CreateFolder("Spectator Mode")
+camFolder:Toggle("Freecam (H)", function(state) if state ~= FreecamEnabled then ToggleFreecam() end end)
+camFolder:Slider("Fly Speed", {min = 1, max = 10, precise = true}, function(v) FreecamSpeed = v end)
 
 local wings = w:CreateFolder("Get Wings")
 wings:Button("Collect All Transmitters", function()
@@ -145,30 +171,17 @@ wings:Button("Collect All Transmitters", function()
 end)
 
 local envFolder = w:CreateFolder("Environment")
---// FULL BRIGHT TOGGLE
 envFolder:Toggle("Full Bright", function(state)
     if state then
-        Lighting.Brightness = 2
-        Lighting.ClockTime = 14
-        Lighting.FogEnd = 100000
-        Lighting.GlobalShadows = false
+        Lighting.Brightness = 2; Lighting.ClockTime = 14; Lighting.FogEnd = 100000; Lighting.GlobalShadows = false
         Lighting.Ambient = Color3.fromRGB(255, 255, 255)
     else
-        Lighting.Brightness = OriginalBrightness
-        Lighting.ClockTime = OriginalClockTime
-        Lighting.FogEnd = OriginalFogEnd
-        Lighting.GlobalShadows = true
-        Lighting.Ambient = OriginalAmbient
+        Lighting.Brightness = OriginalBrightness; Lighting.ClockTime = OriginalClockTime
+        Lighting.FogEnd = OriginalFogEnd; Lighting.GlobalShadows = true; Lighting.Ambient = OriginalAmbient
     end
 end)
-
---// REMOVE FOG TOGGLE
 envFolder:Toggle("Remove Fog", function(state)
-    if state then
-        Lighting.FogEnd = 100000 -- Pushes fog so far back you can't see it
-    else
-        Lighting.FogEnd = OriginalFogEnd -- Restores original atmosphere
-    end
+    Lighting.FogEnd = state and 100000 or OriginalFogEnd
 end)
 
 local settings = w:CreateFolder("Settings")
@@ -176,31 +189,77 @@ settings:Button("Close", function()
     for _, connection in pairs(Connections) do connection:Disconnect() end
     if CurrentPlatform then CurrentPlatform:Destroy() end
     WaypointPart:Destroy()
+    local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if root then root.Anchored = false end
+    Camera.CameraType = Enum.CameraType.Custom
     local ui = game:GetService("CoreGui"):FindFirstChild("Abyss World") or Player.PlayerGui:FindFirstChild("Abyss World")
     if ui then ui:Destroy() end
-    -- Add this inside your Close button function
-    Lighting.Brightness = OriginalBrightness
-    Lighting.ClockTime = OriginalClockTime
-    Lighting.FogEnd = OriginalFogEnd
-    Lighting.GlobalShadows = true
-    Lighting.Ambient = OriginalAmbient
 end)
 
 --// LOGIC CONNECTIONS
+Connections.FreecamMove = RunService.RenderStepped:Connect(function()
+    if FreecamEnabled then
+        -- 1. FORCE ANCHOR & CAMERA TYPE
+        local char = Player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and not part.Anchored then
+                    part.Anchored = true -- Keep character frozen
+                end
+            end
+        end
+        
+        if Camera.CameraType ~= Enum.CameraType.Scriptable then
+            Camera.CameraType = Enum.CameraType.Scriptable
+        end
+
+        -- 2. ROTATION (Mouse Locking)
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+        local delta = UserInputService:GetMouseDelta()
+        
+        RotationY = RotationY - (delta.X * Sensitivity)
+        RotationX = RotationX - (delta.Y * Sensitivity)
+        RotationX = math.clamp(RotationX, -80, 80)
+        
+        -- Apply rotation while keeping current position
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position) * CFrame.Angles(0, math.rad(RotationY), 0) * CFrame.Angles(math.rad(RotationX), 0, 0)
+
+        -- 3. TRUE RELATIVE MOVEMENT
+        local moveVector = Vector3.zero
+        local cframe = Camera.CFrame
+
+        -- Movement is now relative to where the camera faces
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector += cframe.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector -= cframe.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector -= cframe.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector += cframe.RightVector end
+        
+        -- Vertical movement remains global
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector += Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveVector -= Vector3.new(0, 1, 0) end
+
+        if moveVector.Magnitude > 0 then
+            -- Multiply moveVector by speed to "fly"
+            Camera.CFrame = Camera.CFrame + (moveVector.Unit * FreecamSpeed)
+        end
+    end
+end)
+
 Connections.Input = UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
-    local char = Player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    if input.KeyCode == Enum.KeyCode.T then
-        WaypointPos = root.CFrame
-        WaypointPart.CFrame = root.CFrame
-        WaypointPart.Parent = workspace
-    elseif input.KeyCode == Enum.KeyCode.LeftShift then
-        if WaypointPos then root.Velocity = Vector3.zero; root.CFrame = WaypointPos end
+    if input.KeyCode == Enum.KeyCode.H then
+        ToggleFreecam() -- Correct place for the H keybind
+    elseif input.KeyCode == Enum.KeyCode.T then
+        local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            WaypointPos = root.CFrame
+            WaypointPart.CFrame = root.CFrame; WaypointPart.Parent = workspace
+        end
+    elseif input.KeyCode == Enum.KeyCode.LeftShift and not FreecamEnabled then
+        local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if root and WaypointPos then root.Velocity = Vector3.zero; root.CFrame = WaypointPos end
     elseif input.KeyCode == Enum.KeyCode.LeftControl then
-        if PlatformEnabled then TogglePlatform() end -- Fixed the floating elseif error
+        if PlatformEnabled then TogglePlatform() end
     end
 end)
 
@@ -219,3 +278,21 @@ Connections.PlatformFollow = RunService.Heartbeat:Connect(function()
         CurrentPlatform.Position = Vector3.new(root.Position.X, CurrentPlatform.Position.Y, root.Position.Z)
     end
 end)
+
+--// FIX: UNLOCK MOUSE ON DEATH
+local function SetupHealthListener(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        -- Force the mouse to unlock so you can click "Respawn"
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        -- Ensure the cursor is visible
+        UserInputService.MouseIconEnabled = true
+        print("Player died: Mouse unlocked for respawn menu.")
+    end)
+end
+
+-- Run for current character
+if Player.Character then SetupHealthListener(Player.Character) end
+
+-- Run every time the player respawns
+Player.CharacterAdded:Connect(SetupHealthListener)
