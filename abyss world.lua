@@ -139,7 +139,30 @@ EnvTab:CreateToggle({Name = "Full Bright", CurrentValue = false, Callback = func
 EnvTab:CreateToggle({Name = "Remove Fog", CurrentValue = false, Callback = function(v) Lighting.FogEnd = v and 100000 or 1000 end})
 
 --// SETTINGS TAB
-SettingsTab:CreateButton({Name = "Destroy GUI", Callback = function() for _, c in pairs(Connections) do c:Disconnect() end; Rayfield:Destroy() end})
+SettingsTab:CreateButton({
+    Name = "Destroy GUI",
+    Callback = function()
+        -- 1. Stop all background loops (Slow Fall, Freecam, etc.)
+        for _, connection in pairs(Connections) do 
+            connection:Disconnect() 
+        end
+        -- 2. Cleanup physical objects
+        if CurrentPlatform then 
+            CurrentPlatform:Destroy() 
+        end
+        if WaypointPart then 
+            WaypointPart:Destroy() -- This ensures the sphere is deleted from the game
+        end
+        -- 3. Reset character physics and camera
+        local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if root then 
+            root.Anchored = false 
+        end
+        Camera.CameraType = Enum.CameraType.Custom
+        -- 4. Remove the UI from the screen
+        Rayfield:Destroy()
+    end
+})
 
 --// LOGIC LOOP
 Connections.Main = RunService.RenderStepped:Connect(function()
