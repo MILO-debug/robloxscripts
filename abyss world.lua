@@ -16,6 +16,11 @@ local Connections = {}
 local selectedPlayerName = nil
 local PlatformEnabled = false
 local CurrentPlatform = nil -- Added missing variable definition
+local Lighting = game:GetService("Lighting")
+local OriginalFogEnd = Lighting.FogEnd
+local OriginalBrightness = Lighting.Brightness
+local OriginalClockTime = Lighting.ClockTime
+local OriginalAmbient = Lighting.Ambient
 
 --// WAYPOINT SETTINGS
 local WaypointPart = Instance.new("Part")
@@ -139,6 +144,33 @@ wings:Button("Collect All Transmitters", function()
     end
 end)
 
+local envFolder = w:CreateFolder("Environment")
+--// FULL BRIGHT TOGGLE
+envFolder:Toggle("Full Bright", function(state)
+    if state then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+    else
+        Lighting.Brightness = OriginalBrightness
+        Lighting.ClockTime = OriginalClockTime
+        Lighting.FogEnd = OriginalFogEnd
+        Lighting.GlobalShadows = true
+        Lighting.Ambient = OriginalAmbient
+    end
+end)
+
+--// REMOVE FOG TOGGLE
+envFolder:Toggle("Remove Fog", function(state)
+    if state then
+        Lighting.FogEnd = 100000 -- Pushes fog so far back you can't see it
+    else
+        Lighting.FogEnd = OriginalFogEnd -- Restores original atmosphere
+    end
+end)
+
 local settings = w:CreateFolder("Settings")
 settings:Button("Close", function()
     for _, connection in pairs(Connections) do connection:Disconnect() end
@@ -146,6 +178,12 @@ settings:Button("Close", function()
     WaypointPart:Destroy()
     local ui = game:GetService("CoreGui"):FindFirstChild("Abyss World") or Player.PlayerGui:FindFirstChild("Abyss World")
     if ui then ui:Destroy() end
+    -- Add this inside your Close button function
+    Lighting.Brightness = OriginalBrightness
+    Lighting.ClockTime = OriginalClockTime
+    Lighting.FogEnd = OriginalFogEnd
+    Lighting.GlobalShadows = true
+    Lighting.Ambient = OriginalAmbient
 end)
 
 --// LOGIC CONNECTIONS
