@@ -73,16 +73,71 @@ local function ToggleFreecam()
     end
 end
 
+--// UPDATE THE PLATFORM TOGGLE
 local function TogglePlatform()
-    local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    if CurrentPlatform then CurrentPlatform:Destroy(); CurrentPlatform = nil 
+
+    if CurrentPlatform then
+        -- Stop the loop first, then destroy
+        if Connections.PlatformLoop then 
+            Connections.PlatformLoop:Disconnect() 
+            Connections.PlatformLoop = nil
+        end
+        CurrentPlatform:Destroy()
+        CurrentPlatform = nil
     else
-        CurrentPlatform = Instance.new("Part", workspace)
-        CurrentPlatform.Size, CurrentPlatform.Anchored = Vector3.new(15, 1, 15), true
-        CurrentPlatform.Color, CurrentPlatform.Material = Color3.fromRGB(0, 255, 255), Enum.Material.ForceField
+        -- Create the physical platform
+        CurrentPlatform = Instance.new("Part")
+        CurrentPlatform.Name = "EmergencyPlatform"
+        CurrentPlatform.Size = Vector3.new(15, 1, 15)
+        CurrentPlatform.Anchored = true
+        CurrentPlatform.CanCollide = true
+        CurrentPlatform.Color = Color3.fromRGB(0, 255, 255)
+        CurrentPlatform.Material = Enum.Material.ForceField
+        CurrentPlatform.Parent = workspace
+        
+        -- Set initial position under the player
         CurrentPlatform.Position = root.Position - Vector3.new(0, 3.5, 0)
+        
+        -- Start the follow loop immediately
+        Connections.PlatformLoop = RunService.Heartbeat:Connect(function()
+            if CurrentPlatform and root then
+                -- Updates X and Z to follow you, but stays at the same height (Y)
+                CurrentPlatform.Position = Vector3.new(root.Position.X, CurrentPlatform.Position.Y, root.Position.Z)
+            end
+        end)
     end
+end
+
+--// Waypoint Particle Effect
+local function TriggerSpawnEffect(position)
+    local effectPart = Instance.new("Part")
+    effectPart.Size = Vector3.new(1, 1, 1)
+    effectPart.Position = position
+    effectPart.Anchored = true
+    effectPart.CanCollide = false
+    effectPart.Transparency = 1
+    effectPart.Parent = workspace
+    
+    local attachment = Instance.new("Attachment", effectPart)
+    
+    -- Recreating a "Spawn" burst
+    local particles = Instance.new("ParticleEmitter", attachment)
+    particles.Texture = "rbxassetid://2442214486" -- A glow/sparkle texture
+    particles.Color = ColorSequence.new(Color3.fromRGB(0, 255, 255))
+    particles.Rate = 500
+    particles.Speed = NumberRange.new(5, 10)
+    particles.Lifetime = NumberRange.new(0.5, 1)
+    particles.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 2), NumberSequenceKeypoint.new(1, 0)})
+    particles.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)})
+    
+    -- Emit once and cleanup
+    particles:Emit(50)
+    task.delay(1.5, function()
+        effectPart:Destroy()
+    end)
 end
 
 --// UI TABS
@@ -194,24 +249,32 @@ Connections.Input = UserInputService.InputBegan:Connect(function(input, processe
     if processed then return end
     local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
+
     -- T: Save Waypoint
     if input.KeyCode == Enum.KeyCode.T then
         WaypointPos = root.CFrame
         WaypointPart.CFrame = root.CFrame
         WaypointPart.Parent = workspace
-        Rayfield:Notify({Title = "Waypoint Set", Content = "Position saved! Press Left Shift to return.", Duration = 2})
+        Rayfield:Notify({Title = "Waypoint Set", Content = "Position saved!", Duration = 2})
 
     -- Left Shift: Teleport to Waypoint
     elseif input.KeyCode == Enum.KeyCode.LeftShift and not FreecamEnabled then
         if WaypointPos then 
             root.Velocity = Vector3.zero
             root.CFrame = WaypointPos 
+            TriggerSpawnEffect(WaypointPos.Position)
         end
+
+    -- Left Control: SPAWN PLATFORM (Must be enabled in UI first)
+    elseif input.KeyCode == Enum.KeyCode.LeftControl then
+        if PlatformEnabled then 
+            TogglePlatform() 
+        else
+            Rayfield:Notify({Title = "Platform Disabled", Content = "Enable 'Emergency Platform' in the Player tab first.", Duration = 2})
+        end
+
     -- H: Toggle Freecam
     elseif input.KeyCode == Enum.KeyCode.H then
         ToggleFreecam()
-    -- Left Control: Emergency Platform
-    elseif input.KeyCode == Enum.KeyCode.LeftControl and PlatformEnabled then
-        TogglePlatform()
     end
 end)
